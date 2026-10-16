@@ -1,5 +1,7 @@
 #include "gx.hpp"
 #include "__gx.h"
+#include "../../gx/command_processor.hpp"
+#include <cstdio>
 #include "dolphin/mtx/GeoTypes.h"
 
 static inline void CacheProjectionVector(const f32* ptr, GXProjectionType type) {
@@ -116,7 +118,17 @@ void GXSetViewport(float left, float top, float width, float height, float nearZ
   GXSetViewportJitter(left, top, width, height, nearZ, farZ, 1);
 }
 
+// GXSetZScaleOffset state, as the SDK keeps it in __GXData (zScale, zOffset).
+static f32 s_zScale = 16777215.0f;
+static f32 s_zOffset = 0.0f;
+
 void GXSetViewportJitter(float left, float top, float width, float height, float nearZ, float farZ, u32 field) {
+  if (aurora::gx::fifo::draw_trace_active()) {
+    char note[160];
+    std::snprintf(note, sizeof(note), "API GXSetViewport %g,%g %gx%g z=%g..%g field=%u", left, top, width, height,
+                  nearZ, farZ, field);
+    aurora::gx::fifo::draw_trace_note(note);
+  }
   float sx;
   float sy;
   float sz;
@@ -134,10 +146,12 @@ void GXSetViewportJitter(float left, float top, float width, float height, float
   sy = -height / 2.0f;
   ox = 340.0f + (left + width / 2.0f);
   oy = 340.0f + (top + height / 2.0f);
-  zmin = 1.6777215e7f * nearZ;
-  zmax = 1.6777215e7f * farZ;
+  // As the SDK's __GXSetViewport: the depth range goes through the current
+  // GXSetZScaleOffset state (zScale 16777215 and zOffset 0 by default).
+  zmin = s_zScale * nearZ;
+  zmax = s_zScale * farZ;
   sz = zmax - zmin;
-  oz = zmax;
+  oz = zmax + s_zOffset;
 
   __gx->vpLeft = left;
   __gx->vpTop = top;
@@ -189,19 +203,17 @@ void GXProject(f32 x, f32 y, f32 z, const f32 mtx[3][4], const f32* pm, const f3
 // TODO GXLoadNrmMtxIndx3x3
 // TODO GXLoadTexMtxIndx
 void GXSetZScaleOffset(f32 scale, f32 offset) {
-  g_gxState.zScale = scale;
-  g_gxState.zOffset = offset;
+  // The SDK stores zScale = 1 + 2^24-1 * scale and zOffset = 2^24-1 * offset and
+  // rebuilds the current viewport with them (__GXSetViewport): sz = (far - near) *
+  // zScale, oz = far * zScale + zOffset. Games compress the scene's depth range
+  // with it (BW2: scale 0.999 keeps the far plane for the sky); writing sz/oz
+  // directly collapsed the whole scene onto one depth.
   constexpr f32 z24Scale = 16777215.0f;
-  const f32 sz = z24Scale * offset;
-  const f32 oz = 1.0f + z24Scale * scale;
-
-  GX_WRITE_U8(0x10);
-  GX_WRITE_U32(0x101c);
-  GX_WRITE_F32(sz);
-  GX_WRITE_U8(0x10);
-  GX_WRITE_U32(0x101f);
-  GX_WRITE_F32(oz);
-  __gx->bpSent = 0;
+  s_zScale = 1.0f + z24Scale * scale;
+  s_zOffset = z24Scale * offset;
+  g_gxState.zScale = s_zScale;
+  g_gxState.zOffset = s_zOffset;
+  GXSetViewportJitter(__gx->vpLeft, __gx->vpTop, __gx->vpWd, __gx->vpHt, __gx->vpNearz, __gx->vpFarz, 1);
 }
 
 void GXSetScissorBoxOffset(s32 x_off, s32 y_off) {

@@ -23,11 +23,76 @@
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace aurora::gx::fifo {
 AuroraArrayBaseResolver g_arrayBaseResolver = nullptr;
 static Module Log("aurora::gx::fifo");
+
+bool draw_trace_active() noexcept {
+  static const std::vector<u32> frames = [] {
+    std::vector<u32> out;
+    if (const char* v = std::getenv("AURORA_DRAW_TRACE_FRAME")) {
+      for (const char* p = v; *p != 0;) {
+        char* end = nullptr;
+        out.push_back(static_cast<u32>(std::strtoul(p, &end, 10)));
+        if (end == p) break;
+        p = (*end == ',') ? end + 1 : end;
+      }
+    }
+    return out;
+  }();
+  if (frames.empty()) return false;
+  const u32 frame = gfx::current_frame();
+  return std::find(frames.begin(), frames.end(), frame) != frames.end();
+}
+
+static u32 s_traceDrawIndex = 0;
+static u32 s_traceDrawFrame = UINT32_MAX;
+
+void draw_trace_note(const char* what) noexcept {
+  if (!draw_trace_active()) return;
+  Log.warn("[trace] f{} #{} {}", gfx::current_frame(), s_traceDrawIndex, what);
+}
+
+static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize) {
+  if (!draw_trace_active()) return;
+  const u32 frame = gfx::current_frame();
+  if (frame != s_traceDrawFrame) {
+    s_traceDrawFrame = frame;
+    s_traceDrawIndex = 0;
+  }
+  const u32 index = s_traceDrawIndex++;
+  const auto& st = g_gxState;
+  std::string tex;
+  for (u32 i = 0; i < st.numTevStages && i < st.tevStages.size(); ++i) {
+    const auto& stage = st.tevStages[i];
+    if (stage.texMapId == GX_TEXMAP_NULL) continue;
+    const u32 map = static_cast<u32>(stage.texMapId) & 7u;
+    const auto& obj = st.loadedTextures[map];
+    const bool isCopy = obj.data != nullptr && st.copyTextures.contains(obj.data);
+    tex += fmt::format(" s{}:m{}c{}:{}x{}f{}{}", i, map, static_cast<int>(stage.texCoordId), obj.width(), obj.height(),
+                       obj.format(), isCopy ? "COPY" : "");
+  }
+  u32 desc = 0;
+  for (int a = GX_VA_PNMTXIDX; a <= GX_VA_TEX7; ++a) {
+    if (st.vtxDesc[a] != GX_NONE) desc |= 1u << a;
+  }
+  const auto& vp = st.logicalViewport;
+  Log.warn("[trace] f{} #{} draw cmd=0x{:02X} n={} vs={} desc=0x{:05X} pnmtx={} proj={} vp={:.0f},{:.0f},{:.0f}x{:.0f} "
+           "z={:.3f}-{:.3f} sc={},{},{}x{} tev={} tg={} ch={} ind={} blend={}/{}/{} z:{}{}f{} cu={} au={} "
+           "ac={}:{}/{}:{} cull={} fog={} pf={} dstA={}{}",
+           frame, index, cmd, vtxCount, vtxSize, desc, st.currentPnMtx, static_cast<int>(st.projType), vp.left, vp.top,
+           vp.width, vp.height, vp.znear, vp.zfar, st.logicalScissor.x, st.logicalScissor.y, st.logicalScissor.width,
+           st.logicalScissor.height, st.numTevStages, st.numTexGens, st.numChans, st.numIndStages,
+           static_cast<int>(st.blendMode), static_cast<int>(st.blendFacSrc), static_cast<int>(st.blendFacDst),
+           st.depthCompare ? "C" : "-", st.depthUpdate ? "U" : "-", static_cast<int>(st.depthFunc), st.colorUpdate,
+           st.alphaUpdate, static_cast<int>(st.alphaCompare.comp0), st.alphaCompare.ref0,
+           static_cast<int>(st.alphaCompare.comp1), st.alphaCompare.ref1, static_cast<int>(st.cullMode),
+           static_cast<int>(st.fog.type), static_cast<int>(st.pixelFmt),
+           st.dstAlpha == UINT32_MAX ? -1 : static_cast<int>(st.dstAlpha), tex);
+}
 
 // The last draw decoded, reported with each desync: a desync almost always means the
 // draw before it was decoded with the wrong vertex size.
@@ -495,6 +560,11 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
 
 static void apply_xf_viewport() {
   const auto& vp = g_gxState.xfViewport;
+  if (draw_trace_active()) {
+    const std::string note = fmt::format("XF viewport sx={} sy={} sz={} ox={} oy={} oz={}", vp[0], vp[1], vp[2], vp[3],
+                                         vp[4], vp[5]);
+    draw_trace_note(note.c_str());
+  }
   const f32 sx = vp[0];
   const f32 sy = vp[1];
   const f32 sz = vp[2];
@@ -2308,6 +2378,7 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   }
 
   u32 totalVtxBytes = vtxCount * vtxSize;
+  trace_draw(cmd, vtxCount, vtxSize);
   s_lastDraw.pos = pos - 3;
   s_lastDraw.size = size;
   s_lastDraw.cmd = cmd;
@@ -2323,6 +2394,23 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   if (!has_complete_primitive(prim, vtxCount)) {
     pos += totalVtxBytes;
     return true;
+  }
+  // Diagnostics: AURORA_SKIP_DESC_MASK=<hex> drops draws whose vertex descriptor has any
+  // of those attribute bits (bit n = GXAttr n, 0x1 = PNMTXIDX), to find which draws
+  // produce a visual defect.
+  static const u32 skipDescMask = [] {
+    const char* v = std::getenv("AURORA_SKIP_DESC_MASK");
+    return v != nullptr ? static_cast<u32>(std::strtoul(v, nullptr, 16)) : 0u;
+  }();
+  if (skipDescMask != 0) UNLIKELY {
+    u32 desc = 0;
+    for (int a = GX_VA_PNMTXIDX; a <= GX_VA_TEX7; ++a) {
+      if (g_gxState.vtxDesc[a] != GX_NONE) desc |= 1u << a;
+    }
+    if ((desc & skipDescMask) != 0) {
+      pos += totalVtxBytes;
+      return true;
+    }
   }
 
   DrawData* mergeTarget = nullptr;

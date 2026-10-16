@@ -1,3 +1,5 @@
+#include "../../gx/command_processor.hpp"
+#include <cstdio>
 #include "gx.hpp"
 #include "__gx.h"
 
@@ -447,6 +449,12 @@ void GXCopyDisp(void* dest, GXBool clear) {
                             (g_gxState.copyClamp & GX_CLAMP_TOP) != 0,
                             (g_gxState.copyClamp & GX_CLAMP_BOTTOM) != 0);
   aurora::gx::set_display_copy_present_source();
+  if (aurora::gx::fifo::draw_trace_active()) {
+    char note[160];
+    std::snprintf(note, sizeof(note), "COPYDISP src=%d,%d,%dx%d clear=%d", g_gxState.dispCopySrc.x,
+                  g_gxState.dispCopySrc.y, g_gxState.dispCopySrc.width, g_gxState.dispCopySrc.height, clear);
+    aurora::gx::fifo::draw_trace_note(note);
+  }
 }
 
 void GXCopyTex(void* dest, GXBool clear) {
@@ -539,6 +547,14 @@ void GXCopyTex(void* dest, GXBool clear) {
   g_gxState.copyTextures[dest] = handle;
   // Keep the GPU copy and download it only if guest code reads the destination.
   aurora::gfx::efb_ram::schedule(dest, logicalDstWidth, logicalDstHeight, texCopyFmt, handle.handle);
+  if (aurora::gx::fifo::draw_trace_active()) {
+    char note[200];
+    std::snprintf(note, sizeof(note), "COPYTEX src=%d,%d,%dx%d -> %ux%u fmt=%u half=%d clear=%d dest=%p",
+                  g_gxState.texCopySrc.x, g_gxState.texCopySrc.y, g_gxState.texCopySrc.width,
+                  g_gxState.texCopySrc.height, logicalDstWidth, logicalDstHeight, static_cast<unsigned>(texCopyFmt),
+                  g_gxState.texCopyHalfScale, clear, dest);
+    aurora::gx::fifo::draw_trace_note(note);
+  }
 }
 
 void GXClearBoundingBox() {
