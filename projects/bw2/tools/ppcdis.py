@@ -52,7 +52,8 @@ def label(a):
 start = int(target, 16) if re.fullmatch(r"(0x)?[0-9A-Fa-f]{8}", target) else by_name[target]
 md = capstone.Cs(capstone.CS_ARCH_PPC, capstone.CS_MODE_32 | capstone.CS_MODE_BIG_ENDIAN)
 md.skipdata = True
-hi = {}
+known = {}  # register -> value it holds (from lis, then addi/ori)
+STORE_OR_COMPARE = ("st", "cmp", "mt", "tw", "dcb", "icb", "b")
 print(f"; {label(start)} @ 0x{start:08X}")
 for ins in md.disasm(read(start, count * 4), start):
     ops, note = ins.op_str, ""
@@ -60,18 +61,28 @@ for ins in md.disasm(read(start, count * 4), start):
     if m:
         ea = ((R13 if m.group(2) == "r13" else R2) + int(m.group(1), 0)) & 0xFFFFFFFF
         note = f"  ; [0x{ea:08X}]"
+    m = re.fullmatch(r"([rf]\d+), (-?0x[0-9a-f]+|-?\d+)\((r\d+)\)", ops)
+    if m and m.group(3) in known:
+        ea = (known[m.group(3)] + int(m.group(2), 0)) & 0xFFFFFFFF
+        note = f"  ; [0x{ea:08X}]"
+    dest = ops.split(",")[0].strip() if ops else ""
+    value = None
     m = re.fullmatch(r"(r\d+), (-?0x[0-9a-f]+|-?\d+)", ops)
     if ins.mnemonic == "lis" and m:
-        hi[m.group(1)] = (int(m.group(2), 0) & 0xFFFF) << 16
+        value = (int(m.group(2), 0) & 0xFFFF) << 16
     m = re.fullmatch(r"(r\d+), (r\d+), (-?0x[0-9a-f]+|-?\d+)", ops)
-    if ins.mnemonic in ("addi", "ori") and m and m.group(2) in hi:
+    if ins.mnemonic in ("addi", "ori") and m and m.group(2) in known:
         lo = int(m.group(3), 0)
-        ea = (hi[m.group(2)] | (lo & 0xFFFF)) if ins.mnemonic == "ori" else (hi[m.group(2)] + lo) & 0xFFFFFFFF
-        note = f"  ; =0x{ea:08X} {label(ea) if ea in syms else ''}"
-    m = re.fullmatch(r"([rf]\d+), (-?0x[0-9a-f]+|-?\d+)\((r\d+)\)", ops)
-    if m and m.group(3) in hi and m.group(3) not in ("r13", "r2", "r1"):
-        ea = (hi[m.group(3)] + int(m.group(2), 0)) & 0xFFFFFFFF
-        note = f"  ; [0x{ea:08X}]"
+        value = (known[m.group(2)] | (lo & 0xFFFF)) if ins.mnemonic == "ori" else (known[m.group(2)] + lo) & 0xFFFFFFFF
+        note = f"  ; =0x{value:08X} {label(value) if value in syms else ''}"
+    if re.fullmatch(r"r\d+", dest) and not ins.mnemonic.startswith(STORE_OR_COMPARE):
+        if value is None:
+            known.pop(dest, None)
+        else:
+            known[dest] = value
+    if ins.mnemonic == "bl":
+        for r in ("r0", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12"):
+            known.pop(r, None)
     if ins.mnemonic.startswith("b") and re.fullmatch(r"(cr\d, )?0x[0-9a-f]+", ops):
         note = f"  ; {label(int(ops.split()[-1], 16))}"
     if ins.address != start and ins.address in syms:

@@ -1,0 +1,76 @@
+# MKW (RMCP01) runtime address -> RBWE01 address, for what the function map cannot name.
+# action: bw2 (use bw2_addr), keep (same address in both games), disable (MKW-only; leave the hook off).
+# evidence: how the BW2 address was confirmed (projects/bw2/tools/ppcdis.py / find_sdk_function.py).
+mkw_addr,action,bw2_addr,name,evidence
+0x800060A4,bw2,0x80006124,__start,DOL entry point; first bl goes to __init_registers
+0x801A1F58,bw2,0x802C18A4,OSLoadContext,lmw r5/r13 from the context then rfi; between OSSaveContext and OSGetStackPointer
+0x801A20BC,bw2,0x802C1A08,OSInitContext,stores SRR0 at 0x198 and SRR1 0x9032 at 0x19C plus r2/r13 into the context
+0x801A8A80,bw2,0x802C72F8,OSResetSystem,OSPanic stub (obsolete on RVL) between OSGetResetCode and WriteSramCallback
+0x801A66E0,bw2,0x802C592C,SetInterruptMask,cntlzw switch over interrupt groups after __OSInterruptInit
+0x803868F8,bw2,0x805FFED0,InterruptHandlerTable,__OSSetInterruptHandler loads it from -0x1290(r13)
+0x801AACA8,bw2,0x802C94A4,OSSleepTicks,"two-word tick argument and OSDisableInterrupts, between OSWakeupThread and OSGetTime"
+0x801AA3AC,bw2,0x802C8D2C,OSJoinThread,"(thread, val) checks the attr word at 0x2CA under OSDisableInterrupts, after OSCancelThread"
+0x8015D50C,bw2,0x8029F648,DSPAddTask,calls __DSP_insert_task under OSDisableInterrupts after DSPCheckInit
+0x8012405C,bw2,0x8026C0FC,AIGetDMABytesLeft,reads 0xCC00503A (AI DMA blocks left)
+0x8012406C,bw2,0x8026C10C,AIGetDMAStartAddr,combines 0xCC005030/0xCC005032
+0x80126948,bw2,0x8026E5B8,__AXDSPInitCallback,stores 1 to the init flag at -0x1628(r13)
+0x80126954,bw2,0x8026E5C4,__AXDSPResumeCallback,checks the DSP state at -0x1620(r13) == 2
+0x801269BC,bw2,0x8026E62C,__AXOutInitDSP,"calls OSInitThreadQueue, DSPCheckInit, DSPInit and DSPAddTask"
+0x801B2424,bw2,0x802CD31C,SCGetProductCode,"__SCF1 with the ""CODE"" key at -0x46C8(r13)"
+0x801B2460,bw2,0x802CD358,SCGetProductSN,"__SCF1 with the ""SERNO"" key at -0x46C0(r13)"
+0x801B94A4,bw2,0x802D419C,VIInit,"large init guarded by the VI init flag, between __VIInit and VIWaitForRetrace"
+0x8016F438,bw2,0x802AE2A8,GXSetDispCopySrc,builds BP registers 0x49 and 0x4A from left/top/width/height
+0x8017039C,bw2,0x802AEF78,GXSetChanAmbColor,switch over channel IDs 0..5 writing __GXData ambient colours
+0x801727CC,bw2,0x802B1098,GXSetColorUpdate,"cmode0 bit 3 at __GXData+0x220, followed by GXSetAlphaUpdate"
+0x8016E9FC,bw2,0x802AD868,GXSetDrawSync,writes BP 0x48 token register under OSDisableInterrupts
+0x8016EB70,bw2,0x802AD9E8,GXPixModeSync,re-sends pemode0 from __GXData+0x22C
+0x80173400,bw2,0x802B17F8,GXSetZScaleOffset,"scales by constants and stores __GXData+0x55C/0x560, after GXSetViewport"
+0x8016F37C,bw2,0x802AE210,GXEnableTexOffsets,sets bits 12/13 of the per-coord su_ts0 word at __GXData+0x108
+0x801BF64C,bw2,0x802D9E90,WPADGetStatus,tail call to WUDGetStatus
+0x801BF63C,bw2,0x802D9E84,WPADStopSyncSimple,BW2 SDK spelling WPADStopSimpleSync; tail call into WUD
+0x801BF640,bw2,0x802D9E88,WPADSetSyncSimpleCallback,BW2 SDK spelling WPADSetSimpleSyncCallback; tail call into WUD
+0x801BF638,bw2,0x802D9E80,WPADStartFastSyncSimple,BW2 SDK spelling WPADStartFastSimpleSync; tail call to WUDStartSyncSimple
+0x8019B7A4,bw2,0x802BC5B8,NAND::Read,calls ISFS_Read wrapper 0x802AA548 (-> IOS_Read)
+0x8019B80C,bw2,0x802BC620,NAND::ReadAsync,calls ISFS_ReadAsync wrapper 0x802AA568 (-> IOS_ReadAsync)
+0x8019B884,bw2,0x802BC698,NAND::Write,calls ISFS_Write wrapper 0x802AA60C (-> IOS_Write)
+0x8019B8EC,bw2,0x802BC700,NAND::WriteAsync,calls ISFS_WriteAsync wrapper 0x802AA62C (-> IOS_WriteAsync)
+0x8019C380,bw2,0x802BCDCC,NAND::GetStatus,"(path, stat) calls nandGetStatus; first of the three nandGetStatus callers"
+0x8019C448,bw2,0x802BCEB4,NAND::Private::GetStatusAsync,"4 args, calls nandGetStatus; third caller (after NANDGetStatusAsync)"
+0x8019C800,bw2,0x802BD05C,NAND::Open,"(path, info, mode) calls nandOpen; first nandOpen caller"
+0x8019C990,bw2,0x802BD1EC,NAND::Private::OpenAsync,"5 args, calls nandOpen; fourth caller (Open, PrivateOpen, OpenAsync, PrivateOpenAsync)"
+0x8019C918,bw2,0x802BD174,NAND::OpenAsync,"5 args, calls nandOpen; third caller"
+0x8019CA80,bw2,0x802BD2DC,NAND::Close,"(info) checks info+0x8A, returns -0x80 when NAND is not initialised"
+0x8019CAEC,bw2,0x802BD348,NAND::CloseAsync,"(info, cb, block), follows NANDClose"
+0x8019B524,bw2,0x802BCAAC,NAND::Private::CreateAsync,"5 args, second caller of nandCreate 0x802BC908 (source order: CreateAsync, PrivateCreateAsync)"
+0x80347498,bw2,0x8059F818,DefaultThread,__OSThreadInit fills the OSThread at 0x8059F818 and stores it to 0x800000D8/0x800000E4
+0x803477B0,bw2,0x8059FB30,RunQueue,"DefaultThread+0x318 (same .bss layout as MKW); __OSThreadInit clears it, SelectThread indexes it"
+0x803478B0,bw2,0x8059FC30,IdleThread,RunQueue+0x100; SelectThread passes it to OSClearContext/OSSetCurrentContext when idle
+0x80385AE0,bw2,0x805FC978,SwitchThreadCallback,__OSThreadInit and SelectThread call through -0x47E8(r13)
+0x80386918,bw2,0x805FFEF0,Reschedule,SelectThread returns early when -0x1270(r13) is positive
+0x8038691C,bw2,0x805FFEF4,RunQueueHint,__OSReschedule tests -0x126C(r13)
+0x80386920,bw2,0x805FFEF8,RunQueueBits,priority bitmask at -0x1268(r13) set/cleared around RunQueue updates
+0x80347130,bw2,0x8058ED50,OSCreateThread FPU/init flag,OSCreateThread loads 0x40(0x8058ED10) before ORing 0x900 into SRR1
+0x80385AA8,bw2,0x805FC950,default thread attr source,OSCreateThread reads -0x4810(r13) for the word stored at thread+0x194
+0x80336278,bw2,0x8057B178,btm_cb,BTM_IsDeviceUp reads btm_cb+0x64E with btm_cb = 0x8057B178
+0x80386298,disable,,RFL manager pointer,BW2 links no RFL (Mii) library; the RFLiIsWorking hook has no target
+0x805529A8,disable,,THPVideoDecoder entry (MKW StaticR),"BW2 plays movies through THPSimple in the DOL, not MKW's REL THPPlayer"
+0x80552A74,disable,,THPVideoDecoderOnMemory entry (MKW StaticR),same as above
+0x801301B4,bw2,0x802730AC,GKI_delay,empty function between GKI_shutdown and GKI_send_event in the GKI layout; the HLE only sleeps
+0x80386448,bw2,0x805FFA58,__AI_init_flag,AICheckInit returns -0x1708(r13); AIInit tests it
+0x8038644C,bw2,0x805FFA5C,__AID_Active,__AIDHandler sets/clears -0x1704(r13) around the callback
+0x8038647C,bw2,0x805FFA8C,__CallbackStack,__AIDHandler tests -0x16D4(r13) to choose __AICallbackStackSwitch
+0x80386480,bw2,0x805FFA90,__AID_Callback,AIRegisterDMACallback swaps -0x16D0(r13); __AIDHandler calls it
+0x802F81A0,bw2,0x8053D0A0,__AXDSPTask,__AXOutInitDSP fills the DSPTaskInfo at 0x8053D0A0 and passes it to DSPAddTask
+0x8027F820,bw2,0x804CF2A0,AX IRAM image (iram_mmem_addr),__AXOutInitDSP stores 0x804CF2A0 at task+0x0C
+0x802F8200,bw2,0x8053D100,AX DRAM image (dram_mmem_addr),__AXOutInitDSP stores 0x8053D100 (task+0x60) at task+0x18
+0x801269A8,bw2,0x8026E618,AX DSP done callback,__AXOutInitDSP stores it at task+0x30
+0x801269B8,bw2,0x8026E628,AX DSP request callback,__AXOutInitDSP stores it at task+0x34
+0x80386608,bw2,0x805FFC10,__DSP_init_flag,DSPCheckInit returns -0x1550(r13); DSPInit sets it
+0x80386610,bw2,0x805FFC18,__DSP_rude_task_pending,DSPAssertTask writes -0x1548(r13)
+0x80386614,bw2,0x805FFC1C,__DSP_rude_task,DSPAssertTask writes -0x1544(r13)
+0x80386618,bw2,0x805FFC20,__DSP_tmp_task,fourth task pointer DSPInit clears; not touched by __DSP_insert_task
+0x8038661C,bw2,0x805FFC24,__DSP_last_task,__DSP_insert_task sets it with first/curr on an empty list (runtime: kDspCurrentTaskAddr = list tail)
+0x80386620,bw2,0x805FFC28,__DSP_first_task,__DSP_insert_task tests -0x1538(r13) first
+0x80386624,bw2,0x805FFC2C,__DSP_curr_task,DSPAssertTask compares against -0x1534(r13) (runtime: kDspRunningTaskAddr)
+0x80388588,disable,,AXFX 1.0f constant,"only used by the AXFXReverbStdExpCallback hook, which has no BW2 target"
+0x8038858C,disable,,AXFX 0.6f constant,same as above

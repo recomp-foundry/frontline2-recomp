@@ -1,0 +1,17 @@
+# Exact text replacements in runtime files (as imported from upstream), applied by remap_runtime.py
+# after the address rewrite. old/new accept \n escapes. evidence: how the BW2 value was found.
+file,old,new,evidence
+runtime/src/hle/os/os_internal.h,constexpr uint32_t kAlarmQueueOffsetFromR13 = 0x6360u;,constexpr uint32_t kAlarmQueueOffsetFromR13 = 0x12F0u;,InsertAlarm/__OSInitAlarm keep AlarmQueue.head at -0x12F0(r13)
+runtime/src/hle/os/os_init.cpp,"::Memory::Write32(r13 - 0x62ccu, 1);","::Memory::Write32(r13 - 0x1254u, 1);",__OSInitSTM tests/sets its init flag at -0x1254(r13)
+runtime/src/hle/os/os_init.cpp,"::Memory::Write32(r13 - 0x62c8u, 0x00535401);","::Memory::Write32(r13 - 0x1250u, 0x00535401);",__OSInitSTM stores the /dev/stm/immediate fd at -0x1250(r13)
+runtime/src/hle/os/os_init.cpp,"::Memory::Write32(r13 - 0x62c4u, 0x00535402);","::Memory::Write32(r13 - 0x124cu, 0x00535402);",__OSInitSTM stores the /dev/stm/eventhook fd at -0x124C(r13)
+runtime/src/hle/os/os_interrupt.cpp,constexpr uint32_t kDefaultCallbackAddr = 0x801b0000u - 0x43f4u; // 0x801abc0c,constexpr uint32_t kDefaultCallbackAddr = 0x802CA44Cu; // __OSDefaultPowerCallback,__OSInitSTM installs 0x802CA44C (__OSDefaultPowerCallback) as the power callback
+runtime/src/hle/os/os_interrupt.cpp,const uint32_t kCallbackPtrAddr = r13 - 0x62b8u;,const uint32_t kCallbackPtrAddr = r13 - 0x1240u;,OSSetPowerCallback swaps the callback at -0x1240(r13)
+runtime/src/hle/os/os_interrupt.cpp,const uint32_t kHandlerActiveAddr = r13 - 0x62c0u;,const uint32_t kHandlerActiveAddr = r13 - 0x1248u;,OSSetPowerCallback checks the event-hook-registered flag at -0x1248(r13)
+runtime/src/hle/os/os_interrupt.cpp,uint32_t bufferLo = Memory::Read32(ctx->gpr[13] + -25620); // 0x803867EC at r13-0x6414,uint32_t bufferLo = Memory::Read32(ctx->gpr[13] - 0x13ACu); // IPCCurrentBufferLo,IPCGetBufferLo/IPCSetBufferLo use -0x13AC(r13)
+runtime/src/hle/os/os_interrupt.cpp,"Memory::Write32(ctx->gpr[13] + -25620, newBufLo);","Memory::Write32(ctx->gpr[13] - 0x13ACu, newBufLo);",IPCSetBufferLo writes -0x13AC(r13)
+runtime/src/hle/audio/ax_mix.cpp,Memory::Read16(r13 - 0x73fcu),Memory::Read16(r13 - 0x4a74u),__AXOutInitDSP copies -0x4A74(r13) into task+0x10
+runtime/src/hle/audio/ax_mix.cpp,Memory::Read16(r13 - 0x7400u),Memory::Read16(r13 - 0x4a78u),__AXOutInitDSP copies -0x4A78(r13) into task+0x24
+runtime/src/hle/audio/ax_mix.cpp,Memory::Read16(r13 - 0x73feu),Memory::Read16(r13 - 0x4a76u),__AXOutInitDSP copies -0x4A76(r13) into task+0x26
+runtime/src/hle/audio/ax_mix.cpp,"Memory::Write32(r13 - 0x66d8u, 1);","Memory::Write32(r13 - 0x1628u, 1);",__AXDSPInitCallback sets the AX DSP init flag at -0x1628(r13)
+runtime/src/hle/audio/ax_mix.cpp,"Memory::Write32(r13 - 0x66dcu, 0);","Memory::Write32(r13 - 0x162cu, 0);",__AXOutInitDSP clears -0x162C(r13) next to the init flag
