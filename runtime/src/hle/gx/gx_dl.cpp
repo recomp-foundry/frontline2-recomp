@@ -1483,7 +1483,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
     } catch (...) {}
 }
 
-PPC_NATIVE_OVERRIDE_VOID(80172F64, GX__CallDisplayList_80172f64, (uint32_t listAddr, uint32_t nbytes), (listAddr, nbytes));
+PPC_NATIVE_OVERRIDE_VOID(802B1458, GX__CallDisplayList_80172f64, (uint32_t listAddr, uint32_t nbytes), (listAddr, nbytes));
 
 extern "C" void nw4r__lyt__detail__DrawQuad_800847c0(CpuContext* ctx) {
     uint32_t colors[4];
@@ -1500,7 +1500,9 @@ extern "C" void nw4r__lyt__detail__DrawQuad_800847c0(CpuContext* ctx) {
     EmitLytDrawQuad(ctx->gpr[3], ctx->gpr[4], static_cast<int32_t>(ctx->gpr[5]), ctx->gpr[6], colorPtr);
 }
 
+#if 0  // BW2: nw4r::lyt::detail::DrawQuad repeats in the MKW map
 REGISTER_NATIVE_FUNCTION(0x800847C0, nw4r__lyt__detail__DrawQuad_800847c0);
+#endif
 
 extern "C" void nw4r__lyt__detail__DrawQuad_80084d20(CpuContext* ctx) {
     uint32_t colors[4];
@@ -1518,4 +1520,6 @@ extern "C" void nw4r__lyt__detail__DrawQuad_80084d20(CpuContext* ctx) {
     EmitLytDrawQuad(ctx->gpr[3], ctx->gpr[4], static_cast<int32_t>(ctx->gpr[5]), ctx->gpr[6], colorPtr);
 }
 
+#if 0  // BW2: nw4r::lyt::detail::DrawQuad repeats in the MKW map
 REGISTER_NATIVE_FUNCTION(0x80084D20, nw4r__lyt__detail__DrawQuad_80084d20);
+#endif

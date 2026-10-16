@@ -371,5 +371,7 @@ extern "C" void AXFXReverbStdExpCallback_8012b830(CpuContext* ctx) {
     ReverbStd::Render(stateAddr, frame);
 }
 
+#if 0  // BW2: AXFXReverbStdExpCallback has no named BW2 equivalent
 REGISTER_NATIVE_FUNCTION_AS(0x8012B830, AXFXReverbStdExpCallback_8012b830,
                             "AXFXReverbStdExpCallback_8012b830");
+#endif

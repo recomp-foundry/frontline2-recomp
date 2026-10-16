@@ -11,7 +11,7 @@
 
 // Hardware boundary used by the translated MetroWerks stdio implementation.
 // The original routine forwards completed FILE-buffer writes to UART/EXI or TRK.
-// Keep __FileWrite (0x80011620), __fwrite, and fwide translated so their buffering,
+// Keep __FileWrite (0x80258440), __fwrite, and fwide translated so their buffering,
 // orientation, short-write, and return-value semantics remain guest-owned.
 extern "C" uint32_t ConsoleWrite_HLE_80015500(
     uint32_t handle, uint32_t bufferAddr, uint32_t lengthPtr, uint32_t refCon)
@@ -45,7 +45,7 @@ extern "C" uint32_t ConsoleWrite_HLE_80015500(
     }
 }
 
-PPC_NATIVE_OVERRIDE(80015500, ConsoleWrite_HLE_80015500, uint32_t,
+PPC_NATIVE_OVERRIDE(8025CE44, ConsoleWrite_HLE_80015500, uint32_t,
          (uint32_t handle, uint32_t bufferAddr, uint32_t lengthPtr, uint32_t refCon),
          (handle, bufferAddr, lengthPtr, refCon));
 

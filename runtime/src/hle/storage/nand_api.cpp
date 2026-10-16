@@ -82,20 +82,22 @@ extern "C" int32_t NANDInit_HLE(void) {
     // Initialize ISFS
     ISFS_OpenLib_Initialize(&GetPersistentCpuContext());
 
-    // NANDHomeDir is at 0x80346D20 (from ESP_GetDataDir output)
-    WriteGuestNandPath(0x80346D20, CurrentNandDataDir());
+    // NANDHomeDir is at 0x804DA6E0 (from ESP_GetDataDir output)
+    WriteGuestNandPath(0x804DA6E0, CurrentNandDataDir());
 
-    // Mark NAND as initialized (0x80386848 = 2)
-    Memory::Write32(0x80386848, 2);
+    // Mark NAND as initialized (0x805FFE20 = 2)
+    Memory::Write32(0x805FFE20, 2);
 
     return NAND_RESULT_OK;
 }
-PPC_NATIVE_OVERRIDE(8019E18C, NANDInit_HLE, int32_t, (void), ());
+PPC_NATIVE_OVERRIDE(802BD94C, NANDInit_HLE, int32_t, (void), ());
 
 extern "C" int32_t NANDGetCurrentDir_HLE(uint32_t outPathPtr) {
     return WriteNandDataDir(outPathPtr);
 }
+#if 0  // BW2: NAND::GetCurrentDir has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8019E390, NANDGetCurrentDir_HLE, int32_t, (uint32_t outPathPtr), (outPathPtr));
+#endif
 
 extern "C" int32_t NANDCheck_HLE(uint32_t blockSize, uint32_t blockCount, uint32_t outResults) {
     const int32_t result = NandCheckContract::WriteHealthyResult(
@@ -116,7 +118,9 @@ extern "C" int32_t NANDCheck_HLE(uint32_t blockSize, uint32_t blockCount, uint32
     }
     return result;
 }
+#if 0  // BW2: NAND::Check has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8019EAD0, NANDCheck_HLE, int32_t, (uint32_t blockSize, uint32_t blockCount, uint32_t outResults), (blockSize, blockCount, outResults));
+#endif
 
 extern "C" int32_t NANDOpen_HLE(uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t mode) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
@@ -204,7 +208,7 @@ extern "C" int32_t NANDOpen_HLE(uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t
     Memory::Write8(fileInfoPtr + 0x8a, NAND_OPEN_FLAG_OPEN);
     return NAND_RESULT_OK;
 }
-PPC_NATIVE_OVERRIDE(8019C800, NANDOpen_HLE, int32_t, (uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t mode), (pathPtr, fileInfoPtr, mode));
+PPC_NATIVE_OVERRIDE(802BD05C, NANDOpen_HLE, int32_t, (uint32_t pathPtr, uint32_t fileInfoPtr, uint32_t mode), (pathPtr, fileInfoPtr, mode));
 
 extern "C" int32_t NANDClose_HLE(uint32_t fileInfoPtr) {
     if (!fileInfoPtr) {
@@ -213,7 +217,7 @@ extern "C" int32_t NANDClose_HLE(uint32_t fileInfoPtr) {
     
     uint8_t openFlag = Memory::Read8(fileInfoPtr + 0x8a);
     if (openFlag == NAND_OPEN_FLAG_SAFE_OPEN || openFlag == NAND_OPEN_FLAG_SAFE_OPEN_ASYNC) {
-        // Console behaviour (nandClose @ 0x8019CA80): only openFlag==1 is accepted, a safe
+        // Console behaviour (nandClose @ 0x802BD2DC): only openFlag==1 is accepted, a safe
         // handle falls through to -8. It is neither closed nor committed here.
         LogNandWarning("NANDClose", "WARNING: refusing safe-open handle (flag=%u), NANDSafeClose is required", openFlag);
         return NAND_RESULT_INVALID;
@@ -236,7 +240,7 @@ extern "C" int32_t NANDClose_HLE(uint32_t fileInfoPtr) {
     Memory::Write8(fileInfoPtr + 0x8a, NAND_OPEN_FLAG_CLOSED); // Mark as closed
     return NAND_RESULT_OK;
 }
-PPC_NATIVE_OVERRIDE(8019CA80, NANDClose_HLE, int32_t, (uint32_t fileInfoPtr), (fileInfoPtr));
+PPC_NATIVE_OVERRIDE(802BD2DC, NANDClose_HLE, int32_t, (uint32_t fileInfoPtr), (fileInfoPtr));
 
 extern "C" int32_t NANDRead_HLE(uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length) {
     if (!fileInfoPtr) {
@@ -256,7 +260,7 @@ extern "C" int32_t NANDRead_HLE(uint32_t fileInfoPtr, uint32_t bufferPtr, uint32
     size_t bytesRead = std::fread(buffer, 1, length, handle->file);
     return static_cast<int32_t>(bytesRead);
 }
-PPC_NATIVE_OVERRIDE(8019B7A4, NANDRead_HLE, int32_t, (uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length), (fileInfoPtr, bufferPtr, length));
+PPC_NATIVE_OVERRIDE(802BC5B8, NANDRead_HLE, int32_t, (uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length), (fileInfoPtr, bufferPtr, length));
 
 extern "C" int32_t NANDWrite_HLE(uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length) {
     if (!fileInfoPtr) {
@@ -277,7 +281,7 @@ extern "C" int32_t NANDWrite_HLE(uint32_t fileInfoPtr, uint32_t bufferPtr, uint3
     std::fflush(handle->file);
     return static_cast<int32_t>(bytesWritten);
 }
-PPC_NATIVE_OVERRIDE(8019B884, NANDWrite_HLE, int32_t, (uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length), (fileInfoPtr, bufferPtr, length));
+PPC_NATIVE_OVERRIDE(802BC698, NANDWrite_HLE, int32_t, (uint32_t fileInfoPtr, uint32_t bufferPtr, uint32_t length), (fileInfoPtr, bufferPtr, length));
 
 extern "C" int32_t NANDSeek_HLE(uint32_t fileInfoPtr, int32_t offset, int32_t whence) {
     if (!fileInfoPtr) {
@@ -295,7 +299,9 @@ extern "C" int32_t NANDSeek_HLE(uint32_t fileInfoPtr, int32_t offset, int32_t wh
 
     return static_cast<int32_t>(std::ftell(handle->file));
 }
+#if 0  // BW2: NAND::Seek has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8019B964, NANDSeek_HLE, int32_t, (uint32_t fileInfoPtr, int32_t offset, int32_t whence), (fileInfoPtr, offset, whence));
+#endif
 
 extern "C" int32_t NANDGetLength_HLE(uint32_t fileInfoPtr, uint32_t outLengthPtr) {
     if (!fileInfoPtr || !outLengthPtr) {
@@ -311,7 +317,9 @@ extern "C" int32_t NANDGetLength_HLE(uint32_t fileInfoPtr, uint32_t outLengthPtr
     Memory::Write32(outLengthPtr, static_cast<uint32_t>(extent.size));
     return NAND_RESULT_OK;
 }
+#if 0  // BW2: NAND::GetLength has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8019BF4C, NANDGetLength_HLE, int32_t, (uint32_t fileInfoPtr, uint32_t outLengthPtr), (fileInfoPtr, outLengthPtr));
+#endif
 
 extern "C" int32_t NANDCreate_HLE(uint32_t pathPtr, uint32_t perm, uint32_t attr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
@@ -336,7 +344,9 @@ extern "C" int32_t NANDCreate_HLE(uint32_t pathPtr, uint32_t perm, uint32_t attr
     
     return NAND_RESULT_OK;
 }
+#if 0  // BW2: NAND::Create has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8019B43C, NANDCreate_HLE, int32_t, (uint32_t pathPtr, uint32_t perm, uint32_t attr), (pathPtr, perm, attr));
+#endif
 
 extern "C" int32_t NANDDelete_HLE(uint32_t pathPtr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
@@ -356,7 +366,7 @@ extern "C" int32_t NANDDelete_HLE(uint32_t pathPtr) {
     
     return NAND_RESULT_UNKNOWN;
 }
-PPC_NATIVE_OVERRIDE(8019B59C, NANDDelete_HLE, int32_t, (uint32_t pathPtr), (pathPtr));
+PPC_NATIVE_OVERRIDE(802BC370, NANDDelete_HLE, int32_t, (uint32_t pathPtr), (pathPtr));
 
 extern "C" int32_t NANDCreateDir_HLE(uint32_t pathPtr, uint32_t perm, uint32_t attr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
@@ -379,7 +389,9 @@ extern "C" int32_t NANDCreateDir_HLE(uint32_t pathPtr, uint32_t perm, uint32_t a
     
     return NAND_RESULT_UNKNOWN;
 }
+#if 0  // BW2: NAND::CreateDir has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8019BBE0, NANDCreateDir_HLE, int32_t, (uint32_t pathPtr, uint32_t perm, uint32_t attr), (pathPtr, perm, attr));
+#endif
 
 extern "C" int32_t NANDMove_HLE(uint32_t srcPathPtr, uint32_t dstPathPtr) {
     // A cross-mount move is implemented as several host operations. Keep two
@@ -531,7 +543,9 @@ extern "C" int32_t NANDMove_HLE(uint32_t srcPathPtr, uint32_t dstPathPtr) {
     LogNandError("NANDMove", "FAILED error=%d message='%s'", ec.value(), ec.message().c_str());
     return NAND_RESULT_UNKNOWN;
 }
+#if 0  // BW2: NAND::Move has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8019BEE8, NANDMove_HLE, int32_t, (uint32_t srcPathPtr, uint32_t dstPathPtr), (srcPathPtr, dstPathPtr));
+#endif
 
 extern "C" int32_t NANDGetStatus_HLE(uint32_t pathPtr, uint32_t outStatusPtr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
@@ -552,7 +566,7 @@ extern "C" int32_t NANDGetStatus_HLE(uint32_t pathPtr, uint32_t outStatusPtr) {
     
     return NAND_RESULT_OK;
 }
-PPC_NATIVE_OVERRIDE(8019C380, NANDGetStatus_HLE, int32_t, (uint32_t pathPtr, uint32_t outStatusPtr), (pathPtr, outStatusPtr));
+PPC_NATIVE_OVERRIDE(802BCDCC, NANDGetStatus_HLE, int32_t, (uint32_t pathPtr, uint32_t outStatusPtr), (pathPtr, outStatusPtr));
 
 extern "C" int32_t NANDGetType_HLE(uint32_t pathPtr, uint32_t outTypePtr) {
     const char* path = pathPtr ? (const char*)Memory::GetPointer(pathPtr) : nullptr;
@@ -571,7 +585,9 @@ extern "C" int32_t NANDGetType_HLE(uint32_t pathPtr, uint32_t outTypePtr) {
     Memory::Write8(outTypePtr, type);
     return NAND_RESULT_OK;
 }
+#if 0  // BW2: NAND::GetType has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8019E770, NANDGetType_HLE, int32_t, (uint32_t pathPtr, uint32_t outTypePtr), (pathPtr, outTypePtr));
+#endif
 
 // ============================================================================
 // contentFastOpenNAND/contentReadNAND/contentCloseNAND: NAND-installed content (WADs) never
@@ -581,9 +597,13 @@ PPC_NATIVE_OVERRIDE(8019E770, NANDGetType_HLE, int32_t, (uint32_t pathPtr, uint3
 extern "C" int32_t contentFastOpenNAND_HLE(uint32_t contentId, uint32_t outHandlePtr) {
     return ISFS_ENOENT;
 }
+#if 0  // BW2: contentFastOpenNAND has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8015BC80, contentFastOpenNAND_HLE, int32_t, (uint32_t contentId, uint32_t outHandlePtr), (contentId, outHandlePtr));
+#endif
 
 extern "C" int32_t contentReadNAND_HLE(uint32_t handlePtr, uint32_t buffer, uint32_t length, uint32_t outReadPtr) {
     return ISFS_EINVAL;
 }
+#if 0  // BW2: contentReadNAND has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(8015BCF8, contentReadNAND_HLE, int32_t, (uint32_t handlePtr, uint32_t buffer, uint32_t length, uint32_t outReadPtr), (handlePtr, buffer, length, outReadPtr));
+#endif

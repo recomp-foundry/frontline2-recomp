@@ -328,7 +328,7 @@ extern "C" void OS__SleepTicks_HLE_801aaca8(CpuContext* ctx)
 
     OS__RestoreInterrupts_801a65d4(irqState);
 }
-REGISTER_NATIVE_FUNCTION(0x801AACA8, OS__SleepTicks_HLE_801aaca8);
+REGISTER_NATIVE_FUNCTION(0x802C94A4, OS__SleepTicks_HLE_801aaca8);
 
 namespace {
 // OSSleepThread must reach SelectThread with the scheduler-disable count at zero, or the thread
@@ -388,7 +388,7 @@ void ReportUnparkableSleep(uint32_t queuePtr, uint32_t thread)
 }
 } // namespace
 
-// OSSleepThread (0x801aa9b8)
+// OSSleepThread (0x802c9298)
 // Puts the current thread to sleep on a specified wait queue.
 extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx)
 {
@@ -487,4 +487,4 @@ extern "C" void OSSleepThread_HLE_801aa9b8(CpuContext* ctx)
     
     OS__RestoreInterrupts_801a65d4(irqState);
 }
-PPC_NATIVE_OVERRIDE_VOID(801AA9B8, OSSleepThread_HLE_801aa9b8, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802C9298, OSSleepThread_HLE_801aa9b8, (CpuContext* ctx), (ctx));

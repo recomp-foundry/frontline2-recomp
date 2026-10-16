@@ -11,4 +11,6 @@ extern "C" uint32_t Stub_8002001C(uint32_t ctx, int code)
     return 0;
 }
 
+#if 0  // BW2: unnamed in the MKW map
 PPC_NATIVE_OVERRIDE(8002001C, Stub_8002001C, uint32_t, (uint32_t ctx, int code), (ctx, code));
+#endif

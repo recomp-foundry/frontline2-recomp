@@ -63,7 +63,9 @@ extern "C" void NHTTPStartup_Reentrant_HLE_801d8d30(CpuContext* ctx) {
     }
 }
 
+#if 0  // BW2: NHTTPStartup has no named BW2 equivalent
 REGISTER_NATIVE_FUNCTION_AS(0x801D8D30, NHTTPStartup_Reentrant_HLE_801d8d30, "NHTTPStartup_Reentrant_HLE_801d8d30");
+#endif
 
 static void WriteNcdConfig(uint32_t addr, uint32_t len) {
     if (!addr || len == 0) {

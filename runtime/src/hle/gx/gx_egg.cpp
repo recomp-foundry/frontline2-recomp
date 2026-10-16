@@ -68,8 +68,12 @@ static void EGG__DrawGX__SetVtxState_HLE(uint32_t state) {
     default: break;
     }
 }
+#if 0  // BW2: MKW label EGG::DrawGX::SetVtxState_switch (inside a function)
 PPC_NATIVE_OVERRIDE_VOID(8021b344, EGG__DrawGX__SetVtxState_HLE, (uint32_t state), (state));
+#endif
+#if 0  // BW2: not an MKW function start
 PPC_NATIVE_OVERRIDE_VOID(8021b688, EGG__DrawGX__SetVtxState_HLE, (uint32_t state), (state));
+#endif
 
 extern "C" void EGG__LightTexture__SetupTevFinish_HLE_8022e2bc(CpuContext* ctx) {
     const uint32_t self = ctx->gpr[3];
@@ -108,7 +112,9 @@ extern "C" void EGG__LightTexture__SetupTevFinish_HLE_8022e2bc(CpuContext* ctx) 
 
     Memory::Write8(self + 0x74, 2);
 }
+#if 0  // BW2: EGG::LightTexture::SetupTevFinish has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE_VOID(8022e2bc, EGG__LightTexture__SetupTevFinish_HLE_8022e2bc, (CpuContext* ctx), (ctx));
+#endif
 
 // ============================================================================
 // EGG::AsyncDisplay
@@ -117,6 +123,8 @@ PPC_NATIVE_OVERRIDE_VOID(8022e2bc, EGG__LightTexture__SetupTevFinish_HLE_8022e2b
 extern "C" void EGG__AsyncDisplay__endRender_HLE_8020ff9c(CpuContext* ctx) {
     uint32_t p = ctx->gpr[3]; ctx->gpr[3] = p; ctx->lr = 0x8020FF9C;
     InvokeIndirectCpu(0x80219FB4u, ctx);
-    InvokeIndirectCpu(0x8016ED50u, ctx);
+    InvokeIndirectCpu(0x802ADBC8u, ctx);
 }
+#if 0  // BW2: used only inside MKW EGG hook bodies, whose registrations have no BW2 target
 PPC_NATIVE_OVERRIDE_VOID(8020FF9C, EGG__AsyncDisplay__endRender_HLE_8020ff9c, (CpuContext* ctx), (ctx));
+#endif

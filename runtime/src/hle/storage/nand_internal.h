@@ -43,8 +43,8 @@
 
 // Mario Kart Wii Title ID
 namespace {
-constexpr uint32_t kNandTitleIdHi = 0x00010004;
-constexpr uint32_t kNandTitleIdLo = 0x524D4350; // "RMCP" fallback
+constexpr uint32_t kNandTitleIdHi = 0x00010000; // BW2: disc title
+constexpr uint32_t kNandTitleIdLo = 0x52425745; // "RBWE" fallback
 } // anonymous namespace
 
 // ============================================================================
@@ -154,7 +154,7 @@ enum NANDResult {
 
 // NANDFileInfo::openFlag (offset 0x8a). The RVL NAND library uses distinct values for
 // plain and safe handles so NANDClose/NANDSafeClose can reject the wrong pairing
-// (see nandOpen/nandClose/nandSafeOpen/nandSafeClose at 0x8019C800..0x8019CF30).
+// (see nandOpen/nandClose/nandSafeOpen/nandSafeClose at 0x802BD05C..0x8019CF30).
 enum NANDOpenFlag {
     NAND_OPEN_FLAG_NONE = 0,
     NAND_OPEN_FLAG_OPEN = 1,               // NANDOpen

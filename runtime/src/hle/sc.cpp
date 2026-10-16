@@ -39,7 +39,7 @@ uint32_t LookupProductRegion(uint32_t table, uint32_t stride, uint32_t count,
 // SCCheckStatus is polled in OSInit's busy loop (while(SCCheckStatus()==1) waits on async SYSCONF
 // load via NAND IPC); we have no async IPC callbacks, so return 0 (SUCCESS) immediately.
 
-// 0x801B0220 -> SCCheckStatus()
+// 0x802CB38C -> SCCheckStatus()
 // Returns: 0 = success, 1 = busy, 2 = error
 extern "C" uint32_t SCCheckStatus_HLE()
 {
@@ -47,18 +47,18 @@ extern "C" uint32_t SCCheckStatus_HLE()
     return 0;
 }
 
-PPC_NATIVE_OVERRIDE(801B0220, SCCheckStatus_HLE, uint32_t, (), ());
+PPC_NATIVE_OVERRIDE(802CB38C, SCCheckStatus_HLE, uint32_t, (), ());
 
-// 0x801B1BE4 -> SCGetAspectRatio()
+// 0x802CCCC0 -> SCGetAspectRatio()
 // Returns: 0 = 4:3, 1 = 16:9
 extern "C" uint32_t SCGetAspectRatio_HLE()
 {
     return (RuntimeConfigFile::WidescreenEnabled(true) || MkwForceAspect169Requested()) ? 1u : 0u;
 }
 
-PPC_NATIVE_OVERRIDE(801B1BE4, SCGetAspectRatio_HLE, uint32_t, (), ());
+PPC_NATIVE_OVERRIDE(802CCCC0, SCGetAspectRatio_HLE, uint32_t, (), ());
 
-// 0x801B1CAC -> SCGetEuRgb60Mode()
+// 0x802CCD88 -> SCGetEuRgb60Mode()
 // Returns: 0 = PAL50, 1 = PAL60/RGB60
 extern "C" uint32_t SCGetEuRgb60Mode_HLE()
 {
@@ -68,22 +68,22 @@ extern "C" uint32_t SCGetEuRgb60Mode_HLE()
     return 1;
 }
 
-PPC_NATIVE_OVERRIDE(801B1CAC, SCGetEuRgb60Mode_HLE, uint32_t, (), ());
+PPC_NATIVE_OVERRIDE(802CCD88, SCGetEuRgb60Mode_HLE, uint32_t, (), ());
 
 // Expose the selected emulated NAND identity through the SDK SC APIs.
 
 extern "C" uint32_t SCGetProductArea_HLE()
 {
-    return LookupProductRegion(0x8029CEB0u, 5, 13,
+    return LookupProductRegion(0x804E83A0u, 5, 13,
                                RuntimeConsoleIdentity::Current().area);
 }
 
-PPC_NATIVE_OVERRIDE(801B23A0, SCGetProductArea_HLE, uint32_t, (), ());
+PPC_NATIVE_OVERRIDE(802CD298, SCGetProductArea_HLE, uint32_t, (), ());
 
 extern "C" uint32_t SCGetProductCode_HLE()
 {
     // Original PAL SC storage for the six-byte CODE value.
-    constexpr uint32_t kProductCodeAddress = 0x803869E0u;
+    constexpr uint32_t kProductCodeAddress = 0x805FFF68u;
     const std::string& productCode = RuntimeConsoleIdentity::Current().productCode;
     const size_t size = productCode.size() + 1;
     if (!Memory::Contains(kProductCodeAddress, size)) {
@@ -94,7 +94,7 @@ extern "C" uint32_t SCGetProductCode_HLE()
     return kProductCodeAddress;
 }
 
-PPC_NATIVE_OVERRIDE(801B2424, SCGetProductCode_HLE, uint32_t, (), ());
+PPC_NATIVE_OVERRIDE(802CD31C, SCGetProductCode_HLE, uint32_t, (), ());
 
 extern "C" uint32_t SCGetProductSN_HLE(uint32_t serialAddress)
 {
@@ -104,7 +104,7 @@ extern "C" uint32_t SCGetProductSN_HLE(uint32_t serialAddress)
         [](uint32_t address, uint32_t value) { Memory::Write32(address, value); });
 }
 
-PPC_NATIVE_OVERRIDE(801B2460, SCGetProductSN_HLE, uint32_t, (uint32_t serialAddress), (serialAddress));
+PPC_NATIVE_OVERRIDE(802CD358, SCGetProductSN_HLE, uint32_t, (uint32_t serialAddress), (serialAddress));
 
 extern "C" uint32_t SCGetProductGameRegion_HLE()
 {
@@ -112,7 +112,9 @@ extern "C" uint32_t SCGetProductGameRegion_HLE()
                                RuntimeConsoleIdentity::Current().gameRegion);
 }
 
+#if 0  // BW2: SCGetProductGameRegion has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(801B24C8, SCGetProductGameRegion_HLE, uint32_t, (), ());
+#endif
 
 // These stubs make the game think all titles are installed; otherwise it checks title ID
 // 0x00010004524d4350 ("RMCP", Mario Kart Wii PAL) and reports error code 5.
@@ -126,7 +128,9 @@ extern "C" uint32_t OS__IsTitleInstalled(uint32_t titleIdHi, uint32_t titleIdLo)
     return 1; // Always report installed
 }
 
+#if 0  // BW2: OS::IsTitleInstalled has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(801AE4A0, OS__IsTitleInstalled, uint32_t, (uint32_t titleIdHi, uint32_t titleIdLo), (titleIdHi, titleIdLo));
+#endif
 
 // 0x801AD1D4 -> OS__CheckInstall(requiredBlocks, titleIdHi, titleIdLo, outFlagsPtr): returns 0 with
 // outFlagsPtr = 0x3 (bit0 has data, bit1 has update; bit2 would be needs-blocks) i.e. fully installed.
@@ -141,4 +145,6 @@ extern "C" uint32_t OS__CheckInstall(uint32_t requiredBlocks, uint32_t titleIdHi
     return 0; // Success
 }
 
+#if 0  // BW2: OS::CheckInstall has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE(801AD1D4, OS__CheckInstall, uint32_t, (uint32_t requiredBlocks, uint32_t titleIdHi, uint32_t titleIdLo, uint32_t outFlagsPtr), (requiredBlocks, titleIdHi, titleIdLo, outFlagsPtr));
+#endif

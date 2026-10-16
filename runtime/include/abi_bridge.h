@@ -26,7 +26,9 @@ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx);
 // (used for the path mask filtering in ScnRenderer::createPath: depth of
 // field is always removed, bloom when the user disabled it)
 inline void ApplyRuntimeCallOptions(uint32_t target, CpuContext* ctx) {
-    if (target == 0x8023BD38u) {
+    (void)target;
+    (void)ctx;
+    if (false) { // BW2: MKW EGG::ScnRenderer::createPath option, no BW2 equivalent
         // ScnRenderer::createPath receives the post-processing path mask in r4.
         ctx->gpr[4] = RuntimeGameGraphicsOptions::FilterScnRendererPathMask(ctx->gpr[4]);
     }
@@ -250,7 +252,7 @@ private:
 // Guest address of OSLoadContext, which models rfi-style context restoration
 // and intentionally replaces the full guest register file instead of returning
 // like a normal ABI call. It can never be guarded.
-inline constexpr uint32_t kOSLoadContextAddress = 0x801A1F58u;
+inline constexpr uint32_t kOSLoadContextAddress = 0x802C18A4u;
 
 inline bool ShouldPreserveNonvolatileGprsForRawCpuCall(const TranslatedFunctionInfo* info) noexcept {
     return info->kind == FunctionKind::Native && info->address != kOSLoadContextAddress;

@@ -50,7 +50,7 @@ std::optional<std::string> RiivoReadFile(const fs::path& path) {
 // fallback the rest of the storage HLE uses for boots that have not written
 // the disc header yet.
 std::string RiivoGameId() {
-    const uint32_t code = RuntimeHle::CurrentGameCode(0x524D4350u); // "RMCP"
+    const uint32_t code = RuntimeHle::CurrentGameCode(0x52425745u); // "RBWE"
     std::string id(6, '\0');
     id[0] = static_cast<char>((code >> 24) & 0xffu);
     id[1] = static_cast<char>((code >> 16) & 0xffu);

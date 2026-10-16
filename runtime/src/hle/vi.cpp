@@ -133,19 +133,19 @@ ViState g_vi;
 
 
 // Guest-side state addresses used by the SDK's VI globals.
-constexpr uint32_t kViInitializedFlagAddr   = 0x80386b38;
-constexpr uint32_t kViTvFormatAddr          = 0x80386ba8;
-constexpr uint32_t kViRenderWidthAddr       = 0x80350864;
-constexpr uint32_t kViRenderHeightAddr      = 0x80350866;
-constexpr uint32_t kViXfbWidthAddr          = 0x80350872;
-constexpr uint32_t kViXfbHeightAddr         = 0x8035087c;
-constexpr uint32_t kViRetraceCountAddr      = 0x80386be4; // matches VIWaitForRetrace/handler
-constexpr uint32_t kViTimingGuardAddr       = 0x80386b44;
-constexpr uint32_t kViPreRetraceCallback    = 0x80386bb8;
-constexpr uint32_t kViPostRetraceCallback   = 0x80386bb4;
-constexpr uint32_t kViNextFrameBufferAddr   = 0x80386ba0;
-constexpr uint32_t kViNextFrameBufferHwAddr = 0x80350890;
-constexpr uint32_t kViRetraceQueueAddr      = 0x80386bc0; // Thread queue for VIWaitForRetrace
+constexpr uint32_t kViInitializedFlagAddr   = 0x806000d8;
+constexpr uint32_t kViTvFormatAddr          = 0x80600148;
+constexpr uint32_t kViRenderWidthAddr       = 0x805A8B04;
+constexpr uint32_t kViRenderHeightAddr      = 0x805A8B06;
+constexpr uint32_t kViXfbWidthAddr          = 0x805A8B12;
+constexpr uint32_t kViXfbHeightAddr         = 0x805a8b1c;
+constexpr uint32_t kViRetraceCountAddr      = 0x80600184; // matches VIWaitForRetrace/handler
+constexpr uint32_t kViTimingGuardAddr       = 0x806000e4;
+constexpr uint32_t kViPreRetraceCallback    = 0x80600158;
+constexpr uint32_t kViPostRetraceCallback   = 0x80600154;
+constexpr uint32_t kViNextFrameBufferAddr   = 0x80600140;
+constexpr uint32_t kViNextFrameBufferHwAddr = 0x805A8B30;
+constexpr uint32_t kViRetraceQueueAddr      = 0x80600160; // Thread queue for VIWaitForRetrace
 
 // EGG::BaseSystem::sSystem pointer - must be non-null before post-retrace callback is valid
 constexpr uint32_t kEggSSystemAddr = 0x80386F60;
@@ -341,10 +341,8 @@ void AdvanceRetrace(CpuContext* ctx, Clock::time_point retraceStamp, bool servic
         if (postCb) {
             // Guard: only invoke callback if sSystem is initialized
             // The callback dereferences sSystem which must be non-null
-            uint32_t sSystemPtr = Memory::Read32(kEggSSystemAddr);
-            if (sSystemPtr != 0) {
-                InvokeIndirectCpu(postCb, ctx);
-            }
+            // BW2: no EGG::BaseSystem to wait for; the callback is the game's own.
+            InvokeIndirectCpu(postCb, ctx);
         }
     }
 
@@ -619,7 +617,7 @@ void VI_HLE_SetXfbReady(uint32_t xfbAddr) {
     }
 }
 
-// VIInit (0x801B94A4) and its lower-level helper __VIInit (0x801B9294) both
+// VIInit (0x802D419C) and its lower-level helper __VIInit (0x802D3F8C) both
 // program MMIO at 0xCC0020xx on hardware. We skip all hardware access and seed
 // the same defaults instead, so the two entry points share one body.
 static void SeedViStateForInit(CpuContext* ctx, const char* who)
@@ -636,13 +634,13 @@ extern "C" void VIInit_HLE_801b94a4(CpuContext* ctx)
 {
     SeedViStateForInit(ctx, "VIInit_801b94a4");
 }
-PPC_NATIVE_OVERRIDE_VOID(801B94A4, VIInit_HLE_801b94a4, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D419C, VIInit_HLE_801b94a4, (CpuContext* ctx), (ctx));
 
 extern "C" void __VIInit_HLE_801b9294(CpuContext* ctx)
 {
     SeedViStateForInit(ctx, "__VIInit_801b9294");
 }
-PPC_NATIVE_OVERRIDE_VOID(801B9294, __VIInit_HLE_801b9294, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D3F8C, __VIInit_HLE_801b9294, (CpuContext* ctx), (ctx));
 
 // -----------------------------------------------------------------------------
 // Helper stubs referenced by VIInit switch cases (case D variants).
@@ -653,24 +651,30 @@ extern "C" void VIInit_caseD_0_HLE_801b9934(CpuContext* ctx)
     (void)ctx;
     RT_LOG(RT_TAG_VI) << "VIInit_caseD_0_801b9934 stubbed" << std::endl;
 }
+#if 0  // BW2: MKW label VIInit_caseD_0 (inside a function)
 PPC_NATIVE_OVERRIDE_VOID(801B9934, VIInit_caseD_0_HLE_801b9934, (CpuContext* ctx), (ctx));
+#endif
 
 extern "C" void VIInit_caseD_1_HLE_801b993c(CpuContext* ctx)
 {
     (void)ctx;
     RT_LOG(RT_TAG_VI) << "VIInit_caseD_1_801b993c stubbed" << std::endl;
 }
+#if 0  // BW2: MKW label VIInit_caseD_1 (inside a function)
 PPC_NATIVE_OVERRIDE_VOID(801B993C, VIInit_caseD_1_HLE_801b993c, (CpuContext* ctx), (ctx));
+#endif
 
 extern "C" void VIInit_caseD_2_HLE_801b9944(CpuContext* ctx)
 {
     (void)ctx;
     RT_LOG(RT_TAG_VI) << "VIInit_caseD_2_801b9944 stubbed" << std::endl;
 }
+#if 0  // BW2: MKW label VIInit_caseD_2 (inside a function)
 PPC_NATIVE_OVERRIDE_VOID(801B9944, VIInit_caseD_2_HLE_801b9944, (CpuContext* ctx), (ctx));
+#endif
 
 // -----------------------------------------------------------------------------
-// VISetPreRetraceCallback (0x801B90F4)
+// VISetPreRetraceCallback (0x802D3DFC)
 // -----------------------------------------------------------------------------
 extern "C" void VISetPreRetraceCallback_HLE_801b90f4(CpuContext* ctx)
 {
@@ -685,10 +689,10 @@ extern "C" void VISetPreRetraceCallback_HLE_801b90f4(CpuContext* ctx)
     }
     ViSetR3(ctx, prev);
 }
-PPC_NATIVE_OVERRIDE_VOID(801B90F4, VISetPreRetraceCallback_HLE_801b90f4, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D3DFC, VISetPreRetraceCallback_HLE_801b90f4, (CpuContext* ctx), (ctx));
 
 // -----------------------------------------------------------------------------
-// VISetPostRetraceCallback (0x801B9138)
+// VISetPostRetraceCallback (0x802D3E40)
 // -----------------------------------------------------------------------------
 extern "C" void VISetPostRetraceCallback_HLE_801b9138(CpuContext* ctx)
 {
@@ -703,17 +707,17 @@ extern "C" void VISetPostRetraceCallback_HLE_801b9138(CpuContext* ctx)
     }
     ViSetR3(ctx, prev);
 }
-PPC_NATIVE_OVERRIDE_VOID(801B9138, VISetPostRetraceCallback_HLE_801b9138, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D3E40, VISetPostRetraceCallback_HLE_801b9138, (CpuContext* ctx), (ctx));
 
 // -----------------------------------------------------------------------------
-// VIGetDTVStatus (0x801BAD38)
+// VIGetDTVStatus (0x802D5A5C)
 // Reads DTV status from VI hardware (MMIO 0xCC00206E). Stub to "not ready".
 // -----------------------------------------------------------------------------
 extern "C" void VIGetDTVStatus_HLE_801bad38(CpuContext* ctx)
 {
     ViSetR3(ctx, 0); // return 0 -> not ready / disabled
 }
-PPC_NATIVE_OVERRIDE_VOID(801BAD38, VIGetDTVStatus_HLE_801bad38, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D5A5C, VIGetDTVStatus_HLE_801bad38, (CpuContext* ctx), (ctx));
 
 // -----------------------------------------------------------------------------
 // VIConfigure & related helpers: translate GXRenderModeObj into guest globals.
@@ -755,7 +759,7 @@ extern "C" void VIConfigure_HLE_801b9f6c(CpuContext* ctx)
 
     ViSetR3(ctx, 0);
 }
-PPC_NATIVE_OVERRIDE_VOID(801B9F6C, VIConfigure_HLE_801b9f6c, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D4B80, VIConfigure_HLE_801b9f6c, (CpuContext* ctx), (ctx));
 
 extern "C" void VIFlush_HLE_801ba9a4(CpuContext* ctx)
 {
@@ -792,7 +796,7 @@ extern "C" void VIFlush_HLE_801ba9a4(CpuContext* ctx)
 
     ViSetR3(ctx, 0);
 }
-PPC_NATIVE_OVERRIDE_VOID(801BA9A4, VIFlush_HLE_801ba9a4, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D5668, VIFlush_HLE_801ba9a4, (CpuContext* ctx), (ctx));
 
 extern "C" void VISetNextFrameBuffer_HLE_801baab8(CpuContext* ctx)
 {
@@ -807,7 +811,7 @@ extern "C" void VISetNextFrameBuffer_HLE_801baab8(CpuContext* ctx)
     }
     ViSetR3(ctx, 0);
 }
-PPC_NATIVE_OVERRIDE_VOID(801BAAB8, VISetNextFrameBuffer_HLE_801baab8, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D577C, VISetNextFrameBuffer_HLE_801baab8, (CpuContext* ctx), (ctx));
 
 extern "C" void VIGetNextFrameBuffer_HLE_801bab24(CpuContext* ctx)
 {
@@ -821,7 +825,9 @@ extern "C" void VIGetNextFrameBuffer_HLE_801bab24(CpuContext* ctx)
     ViSetR3(ctx, fb);
     VI_HLE_PollRetrace(ctx);
 }
+#if 0  // BW2: VIGetNextFrameBuffer has no named BW2 equivalent
 PPC_NATIVE_OVERRIDE_VOID(801BAB24, VIGetNextFrameBuffer_HLE_801bab24, (CpuContext* ctx), (ctx));
+#endif
 
 extern "C" void VISetBlack_HLE_801bab2c(CpuContext* ctx)
 {
@@ -834,7 +840,7 @@ extern "C" void VISetBlack_HLE_801bab2c(CpuContext* ctx)
     }
     ViSetR3(ctx, 0);
 }
-PPC_NATIVE_OVERRIDE_VOID(801BAB2C, VISetBlack_HLE_801bab2c, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D57F0, VISetBlack_HLE_801bab2c, (CpuContext* ctx), (ctx));
 
 extern "C" void VIGetRetraceCount_HLE_801baba4(CpuContext* ctx)
 {
@@ -847,7 +853,7 @@ extern "C" void VIGetRetraceCount_HLE_801baba4(CpuContext* ctx)
     ViSetR3(ctx, count);
     VI_HLE_PollRetrace(ctx);
 }
-PPC_NATIVE_OVERRIDE_VOID(801BABA4, VIGetRetraceCount_HLE_801baba4, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D5868, VIGetRetraceCount_HLE_801baba4, (CpuContext* ctx), (ctx));
 
 extern "C" void VIGetNextField_HLE_801babac(CpuContext* ctx)
 {
@@ -860,7 +866,7 @@ extern "C" void VIGetNextField_HLE_801babac(CpuContext* ctx)
     ViSetR3(ctx, fieldOdd ? 1 : 0);
     VI_HLE_PollRetrace(ctx);
 }
-PPC_NATIVE_OVERRIDE_VOID(801BABAC, VIGetNextField_HLE_801babac, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D5870, VIGetNextField_HLE_801babac, (CpuContext* ctx), (ctx));
 
 extern "C" void VIGetCurrentLine_HLE_801bac48(CpuContext* ctx)
 {
@@ -883,7 +889,7 @@ extern "C" void VIGetCurrentLine_HLE_801bac48(CpuContext* ctx)
     }
     ViSetR3(ctx, line);
 }
-PPC_NATIVE_OVERRIDE_VOID(801BAC48, VIGetCurrentLine_HLE_801bac48, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D590C, VIGetCurrentLine_HLE_801bac48, (CpuContext* ctx), (ctx));
 
 extern "C" void VIWaitForRetrace_HLE_801b99ec(CpuContext* ctx)
 {
@@ -930,4 +936,4 @@ extern "C" void VIWaitForRetrace_HLE_801b99ec(CpuContext* ctx)
     }
     ViSetR3(cpu, 0);
 }
-PPC_NATIVE_OVERRIDE_VOID(801B99EC, VIWaitForRetrace_HLE_801b99ec, (CpuContext* ctx), (ctx));
+PPC_NATIVE_OVERRIDE_VOID(802D46E4, VIWaitForRetrace_HLE_801b99ec, (CpuContext* ctx), (ctx));

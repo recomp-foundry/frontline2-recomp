@@ -116,6 +116,7 @@ void SweepGfxNodeList(uint32_t list, bool offscreenList) {
 // record 2), so without this bypass they'd inherit the expansion and render vertically squashed.
 // Re-arms every scene transition since the offscreen renderer is a per-scene singleton.
 void AssertOffscreenScreenBypass() {
+    return; // BW2: sweeps MKW's EGG/nw4r draw lists at fixed MKW addresses
     SweepGfxNodeList(kMkwGfxDrawList, /*offscreenList=*/false);
     SweepGfxNodeList(kMkwGfxOffscreenList, /*offscreenList=*/true);
 }
@@ -129,6 +130,10 @@ void WriteEggScreenRecord(uint32_t recordAddr, uint32_t width) {
 }
 
 void ApplyEggScreenRecords(uint32_t surfaceWidth, uint32_t surfaceHeight) {
+    // BW2: no EGG::Screen records in guest memory; only the viewport policy applies.
+    (void)surfaceWidth;
+    (void)surfaceHeight;
+    return;
     using namespace MkwDynamicAspect;
     const uint32_t width43 =
         g_widescreenConfigured ? EggRecordWidth(kEggRecordWidth43, surfaceWidth, surfaceHeight)
