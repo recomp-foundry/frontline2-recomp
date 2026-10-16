@@ -212,15 +212,19 @@ if [ "$SKIP_TRANSLATE" -eq 0 ] && [ "$CONFIGURE_ONLY" -eq 0 ]; then
 fi
 
 step "Configuring the native build"
-CMAKE_EXTRA=()
 # Configure the runtime alone (Aurora, SDL3, native HLE) when there is no translation yet.
-[ -f generated/build_shards/shards.cmake ] || CMAKE_EXTRA+=(-DMKW_BUILD_PRODUCTS=OFF)
+# Always pass the value: CMake would otherwise keep a previous OFF from its cache.
+if [ -f generated/build_shards/shards.cmake ]; then
+    CMAKE_EXTRA=(-DMKW_BUILD_PRODUCTS=ON)
+else
+    CMAKE_EXTRA=(-DMKW_BUILD_PRODUCTS=OFF)
+fi
 logged configure.log cmake -S runtime -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER="$(command -v clang)" -DCMAKE_CXX_COMPILER="$(command -v clang++)" \
     -DCMAKE_MAKE_PROGRAM="$(command -v ninja)" -DAURORA_SDL3_PROVIDER=vendor \
     ${CMAKE_EXTRA[@]+"${CMAKE_EXTRA[@]}"}
 if [ "$CONFIGURE_ONLY" -eq 1 ]; then
-    printf '\nConfigured %s (%s).\n' "$BUILD_DIR" "${CMAKE_EXTRA[*]:-full product}"
+    printf '\nConfigured %s (%s).\n' "$BUILD_DIR" "${CMAKE_EXTRA[*]}"
     exit 0
 fi
 [ -f generated/build_shards/shards.cmake ] || fail "no translation yet: run ./build.sh with your game first"

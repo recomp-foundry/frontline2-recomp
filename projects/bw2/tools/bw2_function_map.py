@@ -115,8 +115,25 @@ def prologue_at(a):
 starts, why = {}, Counter()
 
 
+def looks_like_data(t):
+    """.init also holds _rom_copy_info/_bss_init_info tables and MetroTRK's strings: a first
+    word that is printable ASCII or a pointer into the image is data, not code."""
+    w = word(t)
+    if all(0x20 <= c <= 0x7E for c in w.to_bytes(4, "big")):
+        return True
+    # A pointer such as 0x80004000 decodes as a load/store with rA = 0 ("lwz r0, 0x4000(0)"),
+    # which compiled code does not emit: it addresses through r13/r2 or lis.
+    return 32 <= (w >> 26) <= 55 and ((w >> 16) & 31) == 0
+
+
+TRUSTED_SEEDS = {"entry point", "section start", "SEL export", "save/restore thunk", "bl target"}
+
+
 def add(a, reason):
     if not in_text(a) or word(a) == 0:
+        return False
+    if reason not in TRUSTED_SEEDS and a not in starts and looks_like_data(a):
+        why["dropped: data in text"] += 1
         return False
     if a not in starts:
         starts[a] = reason
@@ -207,6 +224,8 @@ for s, e in text:
 
 
 def boundary_ok(t, allow_branch):
+    if t not in starts and looks_like_data(t):
+        return False
     return t in starts or prologue_at(t) or after_terminator(t, allow_branch)
 
 

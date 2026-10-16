@@ -74,3 +74,102 @@ mkw_addr,action,bw2_addr,name,evidence
 0x80386624,bw2,0x805FFC2C,__DSP_curr_task,DSPAssertTask compares against -0x1534(r13) (runtime: kDspRunningTaskAddr)
 0x80388588,disable,,AXFX 1.0f constant,"only used by the AXFXReverbStdExpCallback hook, which has no BW2 target"
 0x8038858C,disable,,AXFX 0.6f constant,same as above
+0x80343740,bw2,0x80588480,GXInit FifoObj,"GXInit passes 0x80588480 to GXInitFifoBase (gxData-0x80, as in MKW)"
+0x803437C0,bw2,0x80588500,gxData,initial value of the __GXData pointer at 0x806033F0 (-0x5AD0(r2))
+0x803886C8,bw2,0x806033F0,__GXData pointer,every GX setter loads -0x5AD0(r2)
+0x803867C4,bw2,0x805FFD8C,__GXCurrentThread,__GXFifoInit stores OSGetCurrentThread() to -0x13D4(r13)
+0x803867C0,bw2,0x805FFD88,GX thread queue,__GXFifoInit clears -0x13D8(r13)
+0x80343DE4,bw2,0x80588B24,CPUFifo object,__GXFifoInit memsets 0x80588B24
+0x80343DC0,bw2,0x80588B00,GPFifo object,__GXFifoInit memsets 0x80588B00
+0x803867B0,bw2,0x805FFD78,CPGPLinked/wrap flag,__GXFifoInit clears byte -0x13E8(r13)
+0x803867B1,bw2,0x805FFD79,wrap flag 2,__GXFifoInit clears byte -0x13E7(r13)
+0x803867D8,bw2,0x805FFDA0,GXDrawDone flag,GXDrawDone stores -0x13C0(r13); same distance from the wrap flag as in MKW
+0x80172E00,bw2,0x802B12FC,GXBeginDisplayList,"fills the DL FifoObj 0x80588B48, saves gxData to +0x80, swaps CPU FIFO to it"
+0x80172EB4,bw2,0x802B13AC,GXEndDisplayList,restores the CPU FIFO saved at 0x805891C8 and copies gxData back
+0x80344090,bw2,0x80588B48,DisplayListFifo object,GXBeginDisplayList/GXEndDisplayList
+0x80344094,bw2,0x80588B4C,DL fifo top,GXBeginDisplayList stores base+size-4 at DLFifo+4
+0x80344098,bw2,0x80588B50,DL fifo size,GXBeginDisplayList stores size at DLFifo+8
+0x803440A4,bw2,0x80588B5C,DL fifo read ptr,GXBeginDisplayList stores base at DLFifo+0x14
+0x803440A8,bw2,0x80588B60,DL fifo write ptr,GXBeginDisplayList stores base at DLFifo+0x18
+0x803440AC,bw2,0x80588B64,DL fifo count,GXBeginDisplayList clears DLFifo+0x1C
+0x80344110,bw2,0x80588BC8,saved gxData for display lists,GXBeginDisplayList memcpys gxData to DLFifo+0x80
+0x80344710,bw2,0x805891C8,OldCPUFifo,GXEndDisplayList restores the CPU FIFO from DLFifo+0x680
+0x803867D0,bw2,0x805FFD98,GX finish thread queue,GXDrawDone sleeps and GXFinishInterruptHandler wakes on -0x13C8(r13)
+0x80808081,keep,0x80808081,division magic constant,"signed-division reciprocal in gx_dl.cpp, not an address"
+0x80386B38,bw2,0x806000D8,VI initialised flag,VIInit tests/sets -0x1088(r13)
+0x80386BA8,bw2,0x80600148,VI TV format,VIGetTvFormat reads -0x1018(r13)
+0x80386BB4,bw2,0x80600154,VI post-retrace callback,VISetPostRetraceCallback swaps -0x100C(r13)
+0x80386BB8,bw2,0x80600158,VI pre-retrace callback,VISetPreRetraceCallback swaps -0x1008(r13)
+0x80386BC0,bw2,0x80600160,VI retrace thread queue,VIWaitForRetrace sleeps on -0x1000(r13)
+0x80386BE4,bw2,0x80600184,VI retrace count,VIGetRetraceCount returns -0xFDC(r13)
+0x80386B44,bw2,0x806000E4,VI timing guard,same .sbss layout as MKW: every VI variable checked above sits at MKW-0x7A60 in BW2
+0x80386BA0,bw2,0x80600140,VI next frame buffer,same .sbss layout as MKW (MKW-0x7A60)
+0x80350890,bw2,0x805A8B30,HorVer.bufAddr,"VISetNextFrameBuffer stores the XFB at 0x805A8B30 (HorVer 0x805A8B00 + 0x30, as in MKW)"
+0x80350864,bw2,0x805A8B04,HorVer render width,HorVer + 0x04 (HorVer base from VISetNextFrameBuffer)
+0x80350866,bw2,0x805A8B06,HorVer render height,HorVer + 0x06
+0x80350872,bw2,0x805A8B12,HorVer XFB width,HorVer + 0x12
+0x8035087C,bw2,0x805A8B1C,HorVer XFB height,HorVer + 0x1C
+0x80386F60,disable,,EGG::BaseSystem::sSystem,MKW-only; its only use in vi.cpp is removed by source_edits.csv
+0x80343230,bw2,0x80588050,DVD WaitingQueue[4],__DVDClearWaitingQueue links the four list heads at 0x80588050
+0x803866A0,bw2,0x805FFC8C,DVDInitialized,"DVDInit returns early when -0x14D4(r13) is set, then sets it"
+0x80386664,bw2,0x805FFC60,Canceling,"DVDCancelAsync fails when -0x1500(r13) is set, then sets it and stores the callback"
+0x80386668,bw2,0x805FFC64,ResumeFromHere,DVDCancelAsync stores a resume state to -0x14FC(r13) in each state case
+0x80386670,bw2,0x805FFC58,PausingFlag,stateReady sets -0x1508(r13) after testing PauseFlag at -0x150C(r13)
+0x803866F0,bw2,0x805FFCD0,executing,stateReady stores the next command block to -0x1490(r13); DVDCancelAsync clears it
+0x80386720,bw2,0x805FFCF0,DVDLow current context index,DVDLowInit clears -0x1470(r13) after building the contexts
+0x80386724,bw2,0x805FFCF4,DVDLow contexts initialised,DVDLowInit tests/sets byte -0x146C(r13)
+0x80386725,bw2,0x805FFCF5,DVDLowInit called,DVDLowInit tests/sets byte -0x146B(r13) on entry
+0x803434E0,bw2,0x80588260,DVDLow contexts[4],DVDLowInit fills 4x0x20 entries at 0x80588260 with 0xFEEBDAED at +0xC and the index at +0x10
+0x8038667C,disable,,CancelAllSync complete,not identified in BW2's DVD layout; its write is removed by source_edits.csv
+0x803866A8,disable,,PrepareReset complete,not identified in BW2's DVD layout; its write is removed by source_edits.csv
+0x8029CEB0,bw2,0x804E83A0,SC product area table,"SCGetProductArea walks 5-byte entries from 0x804E83A0 (12 areas, 0xFF terminator)"
+0x803869E0,bw2,0x805FFF68,SC product code buffer,SCGetProductCode passes -0x11F8(r13) to __SCF1 with the CODE key
+0x8029CEF8,disable,,SC game region table,SCGetProductGameRegion is not linked in RBWE01
+0x8019E18C,bw2,0x802BD94C,NANDInit,"calls ISFS_OpenLib, IOS_Open/Ioctlv, _ES_GetDataDir and OSRegisterVersion; sets -0x1340(r13)"
+0x80386848,bw2,0x805FFE20,NAND library state,NANDInit sets -0x1340(r13); every NAND call checks it == 2 via 0x802BD79C
+0x80346D20,bw2,0x804DA6E0,NAND home directory,NANDInit strcpys the ES data dir to 0x804DA6E0; nandGenerateAbsPath prefixes it
+0x802A3EE8,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x802A3EF4,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x80386F14,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x80386F20,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x80386F24,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x8023E53C,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x805653D0,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x809C1830,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x80386000,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x800AF180,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x809C183C,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x802A3F0C,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x808B4C20,disable,,dynamic_aspect.cpp constant,MKW EGG::Screen widescreen records; the code touching them is disabled by source_edits.csv
+0x802574A0,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x802574E0,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x80257520,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x80388B80,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x80257540,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x80388BA0,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x80388BE0,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x80388BC0,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x8020FF9C,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x80219FB4,disable,,gx_egg.cpp constant,"used only inside MKW EGG hook bodies, whose registrations have no BW2 target"
+0x80529D68,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x809BECF0,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x809BEBA0,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x80550CC0,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x80551658,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x80550F48,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x809BEBA4,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x809BEBA5,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x809BEBA6,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x809BEBA7,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x80551D38,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x80550F9C,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x80551054,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x8088FDB8,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x80551378,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x80242D7C,disable,,task_thread.cpp constant,"used only by the MKW EGG::TaskThread / MovieManager hooks, which have no BW2 target"
+0x809C2898,disable,,music_attenuation.cpp constant,MKW nw4r sound manager pointer; TickGuest is no longer called (source_edits.csv)
+0x800A35E0,disable,,music_attenuation.cpp constant,MKW nw4r sound manager pointer; TickGuest is no longer called (source_edits.csv)
+0x8000A000,disable,,recomp_mod_loader.cpp constant,MKW StaticR.rel loader ranges; BW2 has no REL so the check never matches
+0x8000A400,disable,,recomp_mod_loader.cpp constant,MKW StaticR.rel loader ranges; BW2 has no REL so the check never matches
+0x801A6000,disable,,recomp_mod_loader.cpp constant,MKW StaticR.rel loader ranges; BW2 has no REL so the check never matches
+0x801A7000,disable,,recomp_mod_loader.cpp constant,MKW StaticR.rel loader ranges; BW2 has no REL so the check never matches

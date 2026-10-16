@@ -140,6 +140,31 @@ def statement_span(text, start):
     raise ValueError("unbalanced macro call")
 
 
+def comment_spans(text):
+    """Spans of // and /* */ comments (string and char literals are skipped)."""
+    spans, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'":
+            j = i + 1
+            while j < n and text[j] != c:
+                j += 2 if text[j] == "\\" else 1
+            i = j + 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            spans.append((i, j))
+            i = j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            spans.append((i, j))
+            i = j
+        else:
+            i += 1
+    return spans
+
+
 def same_style(old, value):
     s = f"{value:08X}"
     return s.lower() if old == old.lower() and any(ch.isalpha() for ch in old) else s
@@ -201,17 +226,18 @@ for path in git_ls(RUNTIME_DIRS):
             indent = re.match(r"[ \t]*", text[line_start:]).group(0)
             line_end = text.find("\n", end)
             line_end = len(text) if line_end < 0 else line_end
-            tail_is_blank = text[end:line_end].strip() == ""
+            tail = text[end:line_end].strip()
+            tail_is_blank = tail == "" or tail.startswith("//")
             if text[line_start:m.start()].strip() == "" and tail_is_blank:
                 block = (f"#if 0  // BW2: {reason}\n" + text[line_start:line_end] + "\n#endif")
                 disabled.append((line_start, line_end))
                 edits.append((line_start, line_end, block))
             else:
                 # Shares its line with other code: comment the call out in place.
-                edits.append((m.start(), end, f"/* BW2: {reason} */ (void)0;" if text[end - 1] == ";" else
-                              f"/* BW2: {reason} */"))
+                edits.append((m.start(), end, f"/* BW2: {reason} */"))
                 disabled.append((m.start(), end))
     hook_spans = [(m.start(), statement_span(text, m.start())) for m in HOOK.finditer(text)]
+    comments = comment_spans(text)
     for m in LITERAL.finditer(text):
         addr = int(m.group("addr"), 16)
         if addr < 0x80004000 or any(s <= m.start() < e for s, e in hook_spans + protected):
@@ -222,7 +248,7 @@ for path in git_ls(RUNTIME_DIRS):
                      "bw2_addr": f"0x{new:08X}" if new else "", "how": how, "reason": reason})
         if new is not None and new != addr:
             edits.append((m.start("addr"), m.end("addr"), same_style(m.group("addr"), new)))
-        elif new is None and how != "manual disable":
+        elif new is None and how != "manual disable" and not any(a <= m.start() < b for a, b in comments):
             unresolved.append(rows[-1])
     if edits or protected:
         out, last = [], 0
