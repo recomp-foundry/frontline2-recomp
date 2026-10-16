@@ -379,6 +379,12 @@ void Audio_HLE_Tick(CpuContext* ctx, uint32_t deltaMicros)
             // retain elapsed time here rather than recursively entering the singleton AI/AX device.
             g_ai.accumulatorSeconds += static_cast<double>(deltaMicros) / 1'000'000.0;
             if (g_ai.tickActive) {
+                if (std::getenv("BW2_TRACE_AUDIO") != nullptr) { // BW2: AI DMA tracing
+                    static uint32_t busy = 0;
+                    if ((++busy % 2000) == 1) {
+                        std::fprintf(stderr, "[bw2-ai] tick skipped: tickActive (x%u) cb=%08X\n", busy, g_ai.callback);
+                    }
+                }
                 return;
             }
             g_ai.tickActive = true;

@@ -24,6 +24,7 @@ void ServiceInterruptsAndYield(CpuContext* ctx) {
     if (Fiber::GuestFiberManager::IsInitialized()) {
         VI_HLE_ProcessRetracesDeferred(8);
         OS_HLE_ProcessAlarmsDeferred(8);
+        Audio_HLE_PollDeferred();
     } else {
         GuestInterruptCallbackContext interrupt;
         VI_HLE_PollRetrace(interrupt.get());

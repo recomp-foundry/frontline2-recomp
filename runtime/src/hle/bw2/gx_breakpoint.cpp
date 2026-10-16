@@ -119,6 +119,7 @@ extern "C" uint32_t GXGetCurrentGXThread_bw2() {
         if (Fiber::GuestFiberManager::IsInitialized()) {
             VI_HLE_ProcessRetracesDeferred(8);
             OS_HLE_ProcessAlarmsDeferred(8);
+            Audio_HLE_PollDeferred();
         } else if (TryGetCpuContext() != nullptr) {
             GuestInterruptCallbackContext interrupt;
             VI_HLE_PollRetrace(interrupt.get());

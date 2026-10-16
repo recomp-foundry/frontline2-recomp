@@ -267,6 +267,7 @@ void ServiceDeferredTimingDuringGxWork() {
             // and Aurora work until the native GX call has unwound.
             VI_HLE_ProcessRetracesDeferred(8);
             OS_HLE_ProcessAlarmsDeferred(8);
+            Audio_HLE_PollDeferred(); // BW2: AI DMA keeps time for the movie player while the guest draws
         } else if (TryGetCpuContext() != nullptr) {
             // Same interrupt isolation as the deferred paths above: this GX call
             // is mid-execution of a translated function, so the retrace
