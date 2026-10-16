@@ -99,6 +99,7 @@ void CaptureRenderedFrame() {
     static char path[1024];
     std::snprintf(path, sizeof(path), "%s/frame_%03d.bmp", dir, index++);
     aurora_request_frame_capture(aurora::gfx::current_frame() + 2, path);
+    std::fprintf(stderr, "[capture] %s\n", path);
 }
 } // namespace
 
