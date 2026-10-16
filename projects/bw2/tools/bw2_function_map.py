@@ -33,7 +33,7 @@ address delta is equal, the functions in between keep their layout. A placed
 name is accepted only if the address is already a start in this map and, when
 Dolphin has a signature for that name, the body there matches it.
 
-usage: python3 -I scripts/bw2_function_map.py <extracted disc root> <totaldb.dsy> <out dir> <mkwii MAP.txt>
+usage: python3 -I projects/bw2/tools/bw2_function_map.py <extracted disc root> <totaldb.dsy> <out dir> <mkwii MAP.txt>
 writes <out dir>/MAP.txt and <out dir>/map_report.json
 """
 import hashlib
