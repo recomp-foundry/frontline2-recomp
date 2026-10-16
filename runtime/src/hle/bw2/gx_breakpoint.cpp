@@ -11,6 +11,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include "abi_bridge.h"
 #include "fiber_manager.h"
@@ -47,7 +49,39 @@ extern "C" void GXDisableBreakPt_bw2() {
 }
 PPC_NATIVE_OVERRIDE_VOID(802AC3A8, GXDisableBreakPt_bw2, (), ());
 
+namespace {
+// BW2_TRACE_THREADS=1: every ~5 s (300 retraces) list the guest threads from the
+// OS active-thread list (0x800000DC, linkActive.next at +0x2FC): state, priority,
+// suspend count, the queue a waiting thread sleeps on, and its saved SRR0.
+void TraceGuestThreads() {
+    static const bool enabled = std::getenv("BW2_TRACE_THREADS") != nullptr;
+    static uint32_t retraces = 0;
+    if (!enabled || (++retraces % 300) != 0) {
+        return;
+    }
+    std::fprintf(stderr, "[bw2-threads] current=%08X preRetrace=%08X postRetrace=%08X reschedule=%d runQueueBits=%08X runQueueHint=%u\n",
+                 Memory::Read32(0x800000E4u), Memory::Read32(0x80600158u), Memory::Read32(0x80600154u), static_cast<int32_t>(Memory::Read32(0x805FFEF0u)),
+                 Memory::Read32(0x805FFEF8u), Memory::Read32(0x805FFEF4u));
+    {
+        constexpr uint32_t p = 0x805BD7F0u;  // movie player state (temporary trace)
+        std::fprintf(stderr, "[bw2-thp] aiCb=%08X b8=%08X bc=%02X bd=%02X be=%02X bf=%02X c0=%08X c4=%08X e0=%08X e4=%08X 108=%08X 10c=%08X a0=%08X\n",
+                     Memory::Read32(0x805FFA90u), Memory::Read32(p + 0xB8), Memory::Read8(p + 0xBC), Memory::Read8(p + 0xBD), Memory::Read8(p + 0xBE),
+                     Memory::Read8(p + 0xBF), Memory::Read32(p + 0xC0), Memory::Read32(p + 0xC4), Memory::Read32(p + 0xE0),
+                     Memory::Read32(p + 0xE4), Memory::Read32(p + 0x108), Memory::Read32(p + 0x10C), Memory::Read32(p + 0xA0));
+    }
+    uint32_t thread = Memory::Read32(0x800000DCu);
+    for (int i = 0; thread != 0 && i < 32; ++i) {
+        std::fprintf(stderr, "[bw2-threads]   %08X state=%u prio=%d suspend=%d queue=%08X srr0=%08X lr=%08X\n",
+                     thread, Memory::Read16(thread + 0x2C8u), static_cast<int32_t>(Memory::Read32(thread + 0x2D0u)),
+                     static_cast<int32_t>(Memory::Read32(thread + 0x2CCu)), Memory::Read32(thread + 0x2DCu),
+                     Memory::Read32(thread + 0x198u), Memory::Read32(thread + 0x84u));
+        thread = Memory::Read32(thread + 0x2FCu);
+    }
+}
+} // namespace
+
 void Bw2DeliverGxBreakpoint(CpuContext* ctx) {
+    TraceGuestThreads();
     if (ctx == nullptr || !g_breakPointPending.exchange(false, std::memory_order_acq_rel)) {
         return;
     }

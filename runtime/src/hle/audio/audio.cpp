@@ -254,6 +254,9 @@ extern "C" uint32_t AIRegisterDMACallback_80123f88(uint32_t callback)
 {
     uint32_t old_callback = 0;
     Memory::TryRead32(kAIDmaCallbackAddr, old_callback);
+    if (std::getenv("BW2_TRACE_AUDIO") != nullptr) { // BW2: AI DMA tracing
+        std::fprintf(stderr, "[bw2-ai] AIRegisterDMACallback(%08X) old=%08X host=%08X\n", callback, old_callback, g_ai.callback);
+    }
     Memory::TryWrite32(kAIDmaCallbackAddr, callback);
     {
         std::lock_guard<std::mutex> lock(g_ai.mutex);
@@ -382,6 +385,13 @@ void Audio_HLE_Tick(CpuContext* ctx, uint32_t deltaMicros)
         }
     }
 
+    if (std::getenv("BW2_TRACE_AUDIO") != nullptr && callback == 0x803595E0u) { // BW2: AI DMA tracing
+        static uint32_t traced = 0;
+        if (traced++ < 5) {
+            std::fprintf(stderr, "[bw2-ai] tick cb=%08X enabled=%d start=%08X len=%u rate=%u active=%d\n", callback,
+                         enabled ? 1 : 0, startAddr, length, sampleRate, g_ai.tickActive ? 1 : 0);
+        }
+    }
     if (!enabled || startAddr == 0 || length == 0 || sampleRate == 0) {
         return;
     }
@@ -457,6 +467,15 @@ void Audio_HLE_Tick(CpuContext* ctx, uint32_t deltaMicros)
                     ReportAudioProblem("Audio", "AI DMA callback not registered; skipping");
                 }
             } else {
+                if (std::getenv("BW2_TRACE_AUDIO") != nullptr) { // BW2: AI DMA tracing
+                    static uint32_t blocks = 0;
+                    static uint32_t lastCb = 0;
+                    if ((++blocks % 200) == 1 || callback != lastCb) {
+                        lastCb = callback;
+                        std::fprintf(stderr, "[bw2-ai] block %u cb=%08X start=%08X len=%u rate=%u\n", blocks, callback,
+                                     startAddr, length, sampleRate);
+                    }
+                }
                 Memory::TryWrite32(kAICallbackBusyAddr, 1);
                 InvokeIndirectCpu(callback, cpu);
                 Memory::TryWrite32(kAICallbackBusyAddr, 0);
@@ -521,7 +540,17 @@ int64_t ConsumeAudioPollDeltaMicros()
 void Audio_HLE_Poll(CpuContext* ctx)
 {
     // BW2: MusicAttenuation reads MKW's nw4r sound manager (0x809C2898); not applicable.
-    Audio_HLE_Tick(ctx, static_cast<uint32_t>(ConsumeAudioPollDeltaMicros()));
+    // BW2: the AI DMA callback is an interrupt. Its guest code (the movie player's mixer)
+    // wakes threads; switching fibers in the middle of Audio_HLE_Tick would leave tickActive
+    // set and stop audio DMA for good, so thread switches wait until it returns.
+    OS_HLE_BeginDeferredGuestCallbacks();
+    try {
+        Audio_HLE_Tick(ctx, static_cast<uint32_t>(ConsumeAudioPollDeltaMicros()));
+    } catch (...) {
+        OS_HLE_EndDeferredGuestCallbacks();
+        throw;
+    }
+    OS_HLE_EndDeferredGuestCallbacks();
 }
 
 void Audio_HLE_PollDeferred()

@@ -1,6 +1,8 @@
 // OSMessageQueue HLE.
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 
 #include "abi_bridge.h"
@@ -157,6 +159,10 @@ extern "C" int32_t OS__SendMessage_HLE_801a735c(CpuContext* ctx)
         return 0;
     }
 
+    if (std::getenv("BW2_TRACE_MSG") != nullptr) { // BW2: message tracing
+        std::fprintf(stderr, "[bw2-msg] send q=%08X msg=%08X flags=%u thread=%08X lr=%08X\n",
+                     cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], ::Memory::Read32(0x800000E4u), cpu->lr);
+    }
     // Append, then wake receivers blocked on the receive queue (offset 0x08);
     // a full queue parks this thread on the send queue.
     return MsgQueueOp(
@@ -180,6 +186,10 @@ extern "C" int32_t OS__ReceiveMessage_HLE_801a7424(CpuContext* ctx)
         return 0;
     }
 
+    if (std::getenv("BW2_TRACE_MSG") != nullptr) { // BW2: message tracing
+        std::fprintf(stderr, "[bw2-msg] recv q=%08X out=%08X flags=%u thread=%08X lr=%08X\n",
+                     cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], ::Memory::Read32(0x800000E4u), cpu->lr);
+    }
     // Pop, then wake senders now that there is space; an empty queue parks this
     // thread on the receive queue.
     return MsgQueueOp(

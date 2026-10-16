@@ -9,3 +9,4 @@ void Bw2DeliverGxBreakpoint(CpuContext* ctx);
 // GXSetDrawSync records its token here; GXReadDrawSync (hle/bw2/gx_breakpoint.cpp)
 // returns it, since the FIFO is consumed as it is written.
 void Bw2RecordDrawSyncToken(unsigned int token);
+
