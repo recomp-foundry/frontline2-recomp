@@ -1,0 +1,44 @@
+diff -ruN a/runtime/src/hle/gx/gx_dl.cpp b/runtime/src/hle/gx/gx_dl.cpp
+--- a/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 16:21:20
++++ b/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 16:21:31
+@@ -813,6 +813,31 @@
+     return !WalkDisplayList(data, nbytes, visitor, 0);
+ }
+ 
++// BW2: a register-only list still changes the vertex layout through its CP writes
++// (BW2 sets the descriptor and attribute formats this way before each mesh list).
++// Aurora decodes those writes itself; the HLE state has to follow, or the next list
++// that draws republishes the stale layout over them and Aurora decodes its vertices
++// with the wrong size.
++struct DlCpStateVisitor {
++    static constexpr int kMaxDepth = 8;
++    static constexpr bool kHandlesDraw = false;
++
++    bool OnNop(uint8_t) { return true; }
++    bool OnBpReg(const uint8_t*, uint32_t) { return true; }
++    bool OnCpReg(const uint8_t*, uint8_t reg, uint32_t value) { ApplyCpRegWrite(reg, value); return true; }
++    bool OnXfReg(const uint8_t*, uint32_t) { return true; }
++    bool OnIndexedXf(const uint8_t*, uint8_t, uint32_t) { return true; }
++    bool OnInvalidateVertexCache(uint8_t) { return true; }
++    bool OnUnknownCommand(uint8_t) { return false; }
++    bool OnCallDisplayList(uint32_t addr, uint32_t size, int depth) {
++        if (addr == 0 || size == 0) return true;
++        const uint8_t* nested = static_cast<const uint8_t*>(GuestToHostPtr(addr, size));
++        if (!nested) return false;
++        DlCpStateVisitor child;
++        return WalkDisplayList(nested, size, child, depth + 1);
++    }
++};
++
+ // Interpreter fallback
+ struct DlInterpretVisitor {
+     static constexpr int kMaxDepth = 8;
+@@ -1343,6 +1368,8 @@
+             GXMarkFrameWork();
+             ApplyAuroraMatrixArraysFromHle();
+             GXCallDisplayList(list, nbytes);
++            DlCpStateVisitor cpState;  // BW2: the HLE layout follows the list's CP writes
++            WalkDisplayList(list, nbytes, cpState, 0);
+             // The republish is required even for register-only lists (verified by
+             // experiment: dropping it corrupts in-race geometry decode). It is
+             // instead memoized inside SyncAppliedVtxStateFromHleReal, so a run of

@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <optional>
@@ -27,6 +28,66 @@
 namespace aurora::gx::fifo {
 AuroraArrayBaseResolver g_arrayBaseResolver = nullptr;
 static Module Log("aurora::gx::fifo");
+
+// The last draw decoded, reported with each desync: a desync almost always means the
+// draw before it was decoded with the wrong vertex size.
+struct LastDrawInfo {
+  u32 pos = 0;
+  u32 size = 0;
+  u8 cmd = 0;
+  u16 count = 0;
+  u32 vtxSize = 0;
+  GXAttrType desc[GX_VA_MAX_ATTR]{};
+};
+static LastDrawInfo s_lastDraw;
+static u32 s_cpRegisterCacheForLog(u8 addr);
+
+// Decode desyncs (unknown opcodes, draws that overrun their buffer) are counted
+// without the per-message caps below and summarised every ~300 frames. With
+// AURORA_DESYNC_DUMP=<dir> the first buffers that desync are written there whole.
+static void note_desync(bool truncated, const u8* data, u32 size, u32 pos) {
+  static u64 unknown = 0;
+  static u64 overrun = 0;
+  static u32 windowStart = 0;
+  static u32 dumped = 0;
+  (truncated ? overrun : unknown)++;
+  const u32 frame = gfx::current_frame();
+  if (frame - windowStart >= 300) {
+    Log.warn("[desync] frames {}-{}: unknown opcodes {}, overrun draws {}", windowStart, frame, unknown, overrun);
+    unknown = overrun = 0;
+    windowStart = frame;
+  }
+  // AURORA_DESYNC_AFTER_FRAME=N: describe and dump only desyncs from frame N on.
+  static const u32 afterFrame = [] {
+    const char* v = std::getenv("AURORA_DESYNC_AFTER_FRAME");
+    return v != nullptr ? static_cast<u32>(std::strtoul(v, nullptr, 10)) : 0u;
+  }();
+  if (frame < afterFrame) return;
+  static u32 described = 0;
+  if (described < 40) {
+    ++described;
+    const auto& d = s_lastDraw.desc;
+    Log.warn("[desync] {} at pos {}/{}; last draw at pos {}/{} cmd=0x{:02X} count={} vtxSize={} desc pnmtx={} "
+             "t0mtx={} pos={} nrm={} clr0={} clr1={} tex0={} tex1={} tex2={} tex3={}; cp50=0x{:08X} cp60=0x{:08X} "
+             "gx.vcdLo=0x{:08X} gx.vcdHi=0x{:08X}",
+             truncated ? "overrun" : "unknown", pos, size, s_lastDraw.pos, s_lastDraw.size, s_lastDraw.cmd,
+             s_lastDraw.count, s_lastDraw.vtxSize, static_cast<int>(d[GX_VA_PNMTXIDX]),
+             static_cast<int>(d[GX_VA_TEX0MTXIDX]), static_cast<int>(d[GX_VA_POS]), static_cast<int>(d[GX_VA_NRM]),
+             static_cast<int>(d[GX_VA_CLR0]), static_cast<int>(d[GX_VA_CLR1]), static_cast<int>(d[GX_VA_TEX0]),
+             static_cast<int>(d[GX_VA_TEX1]), static_cast<int>(d[GX_VA_TEX2]), static_cast<int>(d[GX_VA_TEX3]),
+             s_cpRegisterCacheForLog(0x50), s_cpRegisterCacheForLog(0x60), __gx->vcdLo, __gx->vcdHi);
+  }
+  static const char* dir = std::getenv("AURORA_DESYNC_DUMP");
+  if (dir != nullptr && dumped < 24) {
+    char path[1024];
+    std::snprintf(path, sizeof(path), "%s/desync_%02u_f%u_%s_pos%u_size%u.bin", dir, dumped++, frame,
+                  truncated ? "overrun" : "unknown", pos, size);
+    if (FILE* f = std::fopen(path, "wb")) {
+      std::fwrite(data, 1, size, f);
+      std::fclose(f);
+    }
+  }
+}
 
 using IndexBuffer = std::vector<u16>;
 
@@ -592,6 +653,7 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
           return commandStart;
         }
       } else {
+        note_desync(false, data, size, pos - 1);
         static u32 unknownLogCount = 0;
         if (unknownLogCount < 16) {
           // Hex dump surrounding bytes for debugging
@@ -1406,6 +1468,8 @@ static bool cacheable_cp_register(u8 addr) {
 static std::array<u32, 0x100> s_cpRegisterCache{};
 static std::array<bool, 0x100> s_cpRegisterCacheValid{};
 
+static u32 s_cpRegisterCacheForLog(u8 addr) { return s_cpRegisterCacheValid[addr] ? s_cpRegisterCache[addr] : 0xFFFFFFFFu; }
+
 void reset_cp_register_cache() {
   s_cpRegisterCache.fill(0);
   s_cpRegisterCacheValid.fill(false);
@@ -1823,6 +1887,7 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
 
 static void handle_draw_overrun(u8 cmd, u16 vtxCount, u32 vtxSize, u32 totalVtxBytes, const u8* data, const u32& pos,
                                 u32 size) {
+  note_desync(true, data, size, pos);
   static u32 truncatedDrawLogCount = 0;
   if (truncatedDrawLogCount >= 64) {
     if (truncatedDrawLogCount == 64) {
@@ -2215,6 +2280,12 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   }
 
   u32 totalVtxBytes = vtxCount * vtxSize;
+  s_lastDraw.pos = pos - 3;
+  s_lastDraw.size = size;
+  s_lastDraw.cmd = cmd;
+  s_lastDraw.count = vtxCount;
+  s_lastDraw.vtxSize = vtxSize;
+  std::memcpy(s_lastDraw.desc, g_gxState.vtxDesc.data(), sizeof(s_lastDraw.desc));
   if (pos + totalVtxBytes > size) UNLIKELY {
     handle_draw_overrun(cmd, vtxCount, vtxSize, totalVtxBytes, data, pos, size);
     return false;

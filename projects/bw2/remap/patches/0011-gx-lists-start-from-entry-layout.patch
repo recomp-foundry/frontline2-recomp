@@ -1,0 +1,67 @@
+diff -ruN a/runtime/src/hle/gx/gx_dl.cpp b/runtime/src/hle/gx/gx_dl.cpp
+--- a/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 16:37:11
++++ b/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 16:37:11
+@@ -1343,6 +1343,31 @@
+     GxGuestWrite::NotifyWrite(addr, size);
+ }
+ 
++namespace {
++// BW2: the scan leaves the HLE vertex state where the list ends, but its draws run
++// with the state it starts from (BW2's mesh lists draw first and reset the
++// descriptor at the end). Aurora must be handed the entry state and decode the
++// list's own CP writes in order; afterwards the HLE state moves on to the end state.
++// Constructed before the Apply* calls; Finish() after GXCallDisplayList. Leaving
++// without Finish() keeps the entry state, which the interpreter fallback expects.
++class EntryLayout {
++public:
++    EntryLayout(bool active, const HleGxVertexStateSnapshot& entry) : active_(active) {
++        if (active_) {
++            exit_ = CaptureGxVertexState();
++            RestoreGxVertexState(entry);
++        }
++    }
++    void Finish() const {
++        if (active_) RestoreGxVertexState(exit_);
++    }
++
++private:
++    bool active_;
++    HleGxVertexStateSnapshot exit_{};
++};
++} // namespace
++
+ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes) {
+     if (nbytes == 0 || listAddr == 0) return;
+     try {
+@@ -1493,6 +1518,7 @@
+ 
+         if (needsFlatten) {
+             bool flattenApplyOk = flattenOk && scanOk && auroraStream != nullptr && auroraStreamBytes != 0;
++            const EntryLayout entryLayout(dlHasCpWrites && haveStateBeforeScan, stateBeforeScan);
+             if (flattenApplyOk) {
+                 ApplyAuroraVtxDesc();
+                 ApplyAuroraVtxAttrFmtForDisplayList(dlVtxFmt, dlVtxFmtMixed);
+@@ -1506,6 +1532,7 @@
+                 EnsureAuroraFrameActive();
+                 GXMarkFrameWork();
+                 GXCallDisplayList(auroraStream, auroraStreamBytes);
++                entryLayout.Finish();
+                 // No flip back to GX_DIRECT here
+                 SyncAppliedVtxStateFromHleReal();
+                 return;
+@@ -1515,6 +1542,7 @@
+             bool applyOk = scanOk;
+             bool arraysOk = false;
+             bool xfOk = false;
++            const EntryLayout entryLayout(dlHasCpWrites && haveStateBeforeScan, stateBeforeScan);
+             if (scanOk) {
+                 ApplyAuroraVtxDesc();
+                 ApplyAuroraVtxAttrFmtForDisplayList(dlVtxFmt, dlVtxFmtMixed);
+@@ -1526,6 +1554,7 @@
+                 EnsureAuroraFrameActive();
+                 GXMarkFrameWork();
+                 GXCallDisplayList(list, nbytes);
++                entryLayout.Finish();
+ 
+                 SyncAppliedVtxStateFromHleReal();
+                 return;
