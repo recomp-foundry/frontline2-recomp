@@ -32,14 +32,15 @@ Copyright (c) 2003+ Dolphin Emulator Project.
 Source: <https://github.com/dolphin-emu/dolphin> - license at
 <https://github.com/dolphin-emu/dolphin/blob/master/COPYING>
 
-Two data sets from Dolphin's `Data/Sys` tree are redistributed here under GPL-2.0-or-later:
+Three data sets from Dolphin's `Data/Sys` tree are redistributed here under GPL-2.0-or-later:
 
 | File(s) | Upstream path | Notes |
 | --- | --- | --- |
 | `runtime/assets/dsp/dsp_coef.bin` | `Data/Sys/GC/dsp_coef.bin` | Free DSP polyphase-resampling coefficient ROM written by the Dolphin team. 4096 bytes, SHA-256 `D7741279C2E8EC5C5FB318F8FBDD6DE6BF583520D288E836A5383233A4238179`. The runtime verifies this hash at build time. |
+| `third_party/dolphin-sigdb/totaldb.dsy` | `Data/Sys/totaldb.dsy` | Function signature database (opcode checksum, size, SDK name), used only to name Wii SDK functions in the BW2 function map. 1434668 bytes, SHA-256 `09FB4A167946DBDFEE5890C0F027E40B3EACBB6CC5EE9184ADEB9D1A81C2C0AA`. |
 | `runtime/assets/wii/shared2/wc24/**` | `Data/Sys/Wii/shared2/wc24` | Dolphin's unmodified default WiiConnect24 bootstrap tree, used to seed a newly created per-user NAND on first run. It is byte-identical to the upstream directory. `nwc24dl.bin` contains Dolphin's default task list, which references Nintendo endpoints shut down in 2014; `nwc24msg.cfg` contains Dolphin's placeholder account fields, not a real user's account data. |
 
-Neither contains Nintendo executable code or game assets; both are redistributed under
+None contains Nintendo executable code or game assets; all are redistributed under
 GPL-2.0-or-later from Dolphin's `Data/Sys` tree.
 
 SHA-256 hashes for the WiiConnect24 bootstrap tree:
