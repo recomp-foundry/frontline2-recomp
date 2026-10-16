@@ -8,6 +8,7 @@
 // is delivered at the next VI retrace, from the interrupt context the retrace
 // path provides, as the CP interrupt would have done. No CP register is touched.
 #include "bw2_hle.h"
+#include "settings_overlay.h"
 
 #include <atomic>
 #include <chrono>
@@ -99,32 +100,17 @@ void CaptureRenderedFrame() {
     std::snprintf(path, sizeof(path), "%s/frame_%03d.bmp", dir, index++);
     aurora_request_frame_capture(aurora::gfx::current_frame() + 2, path);
 }
-
-// BW2_DUMP_XFB=<dir>: every ~5 s write the displayed XFB (YUY2, 640 wide) to <dir>/xfb_N.yuv.
-void DumpDisplayedXfb() {
-    static const char* dir = std::getenv("BW2_DUMP_XFB");
-    static uint32_t retraces = 0;
-    static int index = 0;
-    if (dir == nullptr || (++retraces % 300) != 0) {
-        return;
-    }
-    const uint32_t xfb = Memory::Read32(0x80600638u);  // the frame ring's displayed XFB
-    constexpr uint32_t kBytes = 640u * 528u * 2u;
-    if (xfb == 0 || !Memory::Contains(xfb, kBytes)) {
-        return;
-    }
-    char path[1024];
-    std::snprintf(path, sizeof(path), "%s/xfb_%03d.yuv", dir, index++);
-    if (FILE* f = std::fopen(path, "wb")) {
-        std::fwrite(Memory::GetPointer(xfb, kBytes), 1, kBytes, f);
-        std::fclose(f);
-    }
-}
 } // namespace
 
 void Bw2DeliverGxBreakpoint(CpuContext* ctx) {
+    // The runtime's startup screen ends (and stops blocking input) when MKW's
+    // StrapScene::CheckInput runs; BW2 has no such hook, so its first retrace does it.
+    static bool strapAccepted = false;
+    if (!strapAccepted) {
+        strapAccepted = true;
+        settings_overlay::NotifyStrapInputAccepted();
+    }
     TraceGuestThreads();
-    DumpDisplayedXfb();
     CaptureRenderedFrame();
     if (ctx == nullptr || !g_breakPointPending.exchange(false, std::memory_order_acq_rel)) {
         return;

@@ -107,6 +107,14 @@ extern "C" void IOS_IoctlAsync_80194158(CpuContext* ctx)
         return;
     }
 
+    // BW2: IOCTL_STM_EVENTHOOK (0x1000) on the fake /dev/stm/eventhook handle that
+    // __OSInitSTM's HLE hands out. On a console it stays pending until the reset or
+    // power button is pressed; completing it at once made __OSStateEventHandler
+    // re-arm it in a tight loop (thousands of callbacks a minute).
+    if (fd == 0x00535402u && cmd == 0x1000u) {
+        SetIosReturn(ctx, 0);
+        return;
+    }
     const int32_t result = NAND_IOS_Ioctl_HLE(fd, cmd, inBuf, inLen, outBuf, outLen);
     CompleteAsync(ctx, callback, result, callbackArg); // Success
 }

@@ -284,12 +284,22 @@ def is_jump_table(at, run):
     return any(owner <= pc < owner_end for pc in materialized_at.get(at, []))
 
 
+# Tables of records with a code pointer in each (stride 8/12/16, e.g. {handler, 0, -1} entries
+# called through __ptmf_scall): the pointers are not adjacent, so the runs above see them one
+# by one and would reject entries that follow a branch (packed `li r5,0; b common` stubs).
+pointer_slots = sorted(a for at, run in runs if len(run) == 1 for a in [at])
+strided = set()
+for i in range(len(pointer_slots) - 2):
+    a0, a1, a2 = pointer_slots[i:i + 3]
+    if a1 - a0 == a2 - a1 and (a1 - a0) in (8, 12, 16):
+        strided.update((a0, a1, a2))
+
 jump_tables = 0
 for at, run in runs:
     if is_jump_table(at, run):
         jump_tables += 1  # switch table: its targets are case labels, not functions
         continue
-    table = len(run) >= 2  # vtable or function-pointer table
+    table = len(run) >= 2 or at in strided  # vtable or function-pointer table
     for t in run:
         w = word(t)
         if (w >> 16) == 0x3863 and (w & 0x8000) and is_uncond_branch(word(t + 4)):

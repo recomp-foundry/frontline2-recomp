@@ -877,6 +877,19 @@ int32_t ISFS_OpenLib_Initialize(CpuContext* ctx) {
     if (r13 == 0) {
         return ISFS_OK;
     }
+    // BW2: the globals below are MKW's SDA layout. BW2's own ISFS_OpenLib (0x802A94E8)
+    // only opens /dev/fs through IOS_Open (native) and builds its IPC heap, so run it
+    // translated: it stores the fd in __fsFd (0x805FC7F0), which every translated ISFS
+    // call checks before reaching IOS.
+    {
+        const uint32_t savedR3 = ctx->gpr[3];
+        const uint32_t savedLr = ctx->lr;
+        InvokeDirectCpu<0x802A94E8u>(ctx);
+        const int32_t result = static_cast<int32_t>(ctx->gpr[3]);
+        ctx->gpr[3] = savedR3;
+        ctx->lr = savedLr;
+        return result;
+    }
 
     const uint32_t isfsFdGlobal = r13 - kIsfsFdSda1Offset;
     const uint32_t isfsPathGlobal = r13 - kIsfsPathSda1Offset;
@@ -951,7 +964,9 @@ extern "C" void ISFS_OpenLib_HLE_80169BCC(CpuContext* ctx) {
     ctx->gpr[3] = static_cast<uint32_t>(ISFS_OpenLib_Initialize(ctx));
 }
 
-REGISTER_NATIVE_FUNCTION_AS(0x802A94E8, ISFS_OpenLib_HLE_80169BCC, "ISFS_OpenLib_HLE_80169BCC");
+#if 0  // BW2: the translated ISFS_OpenLib runs (see ISFS_OpenLib_Initialize)
+REGISTER_NATIVE_FUNCTION_AS(0x80169BCC, ISFS_OpenLib_HLE_80169BCC, "ISFS_OpenLib_HLE_80169BCC");
+#endif
 
 // ============================================================================
 // IOS_Ioctlv HLE - Vector Ioctl for complex ISFS operations

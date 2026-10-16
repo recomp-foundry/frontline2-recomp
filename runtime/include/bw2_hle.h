@@ -25,3 +25,6 @@ bool Bw2WriteKeyboardRemotePointer(unsigned int chan, unsigned int statusAddr);
 // These write the same words (hle/bw2/gx_breakpoint.cpp).
 void Bw2MirrorCopySrc(bool display, unsigned int left, unsigned int top, unsigned int width, unsigned int height);
 void Bw2MirrorDispCopyDst(unsigned int width);
+// True when channel `chan` is the keyboard/mouse remote (channel 0 with no real
+// remote): WPADProbe and WPADGetInfoAsync report it as a remote with Nunchuk.
+bool Bw2KeyboardRemoteConnected(unsigned int chan);

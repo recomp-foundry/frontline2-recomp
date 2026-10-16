@@ -1,4 +1,5 @@
 #include "hle_stubs.h"
+#include "bw2_hle.h"
 #include "memory.h"
 #include "hle/controller_status_contract.h"
 #include "wii_remote_input.h"
@@ -134,6 +135,12 @@ extern "C" int32_t WPADProbe_HLE(uint32_t chan, uint32_t typePtr)
         }
         return kStatusOk;
     }
+    if (::Bw2KeyboardRemoteConnected(chan)) { // BW2: keyboard/mouse remote with Nunchuk
+        if (typePtr != 0) {
+            Memory::Write32(typePtr, 1u);
+        }
+        return kStatusOk;
+    }
     if (typePtr != 0) {
         Memory::Write32(typePtr, WpadContract::kExtensionCore);
     }
@@ -154,6 +161,15 @@ extern "C" int32_t WPADGetInfoAsync_HLE(uint32_t chan, uint32_t infoPtr, uint32_
         return CompleteWpadRequest(chan, callback, WpadContract::kErrorBadChannel);
     }
 
+    if (::Bw2KeyboardRemoteConnected(chan)) { // BW2: WPADInfo for the keyboard/mouse remote
+        if (infoPtr != 0) {
+            for (uint32_t i = 0; i < 0x18; i += 4) Memory::Write32(infoPtr + i, 0);
+            Memory::Write32(infoPtr + 0x8, 1);  // attach: Nunchuk plugged
+            Memory::Write8(infoPtr + 0x14, 4);  // battery: full
+            Memory::Write8(infoPtr + 0x15, 1);  // led: player 1
+        }
+        return CompleteWpadRequest(chan, callback, kStatusOk);
+    }
     (void)infoPtr;
     return CompleteWpadRequest(chan, callback, WpadContract::kErrorNoController);
 }

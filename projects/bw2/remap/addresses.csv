@@ -41,7 +41,8 @@ mkw_addr,action,bw2_addr,name,evidence
 0x8019C918,bw2,0x802BD174,NAND::OpenAsync,"5 args, calls nandOpen; third caller"
 0x8019CA80,bw2,0x802BD2DC,NAND::Close,"(info) checks info+0x8A, returns -0x80 when NAND is not initialised"
 0x8019CAEC,bw2,0x802BD348,NAND::CloseAsync,"(info, cb, block), follows NANDClose"
-0x8019B524,bw2,0x802BCAAC,NAND::Private::CreateAsync,"5 args, second caller of nandCreate 0x802BC908 (source order: CreateAsync, PrivateCreateAsync)"
+0x8019B524,bw2,0x802BC2F8,NAND::Private::CreateAsync,"calls nandCreate 0x802BC158 with async=1 private=1 (0x802BC280 is the public one)"
+0x8019BCC8,bw2,0x802BCAAC,NAND::Private::CreateDirAsync,"calls nandCreateDir 0x802BC908 with async=1 private=1; was mis-mapped as PrivateCreateAsync, so the save directory became a file"
 0x80347498,bw2,0x8059F818,DefaultThread,__OSThreadInit fills the OSThread at 0x8059F818 and stores it to 0x800000D8/0x800000E4
 0x803477B0,bw2,0x8059FB30,RunQueue,"DefaultThread+0x318 (same .bss layout as MKW); __OSThreadInit clears it, SelectThread indexes it"
 0x803478B0,bw2,0x8059FC30,IdleThread,RunQueue+0x100; SelectThread passes it to OSClearContext/OSSetCurrentContext when idle

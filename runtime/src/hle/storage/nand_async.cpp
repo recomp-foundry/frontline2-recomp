@@ -202,18 +202,16 @@ PPC_NATIVE_OVERRIDE(8019D720, NANDSafeCloseAsync_HLE, int32_t,
 NAND_ASYNC_FWD_BODY(NANDPrivateCreateAsync_HLE, NANDCreate_HLE,
     (uint32_t pathPtr, uint32_t perm, uint32_t attr, uint32_t callbackPtr, uint32_t commandBlockPtr),
     (pathPtr, perm, attr))
-PPC_NATIVE_OVERRIDE(802BCAAC, NANDPrivateCreateAsync_HLE, int32_t,
+PPC_NATIVE_OVERRIDE(802BC2F8, NANDPrivateCreateAsync_HLE, int32_t,
     (uint32_t pathPtr, uint32_t perm, uint32_t attr, uint32_t callbackPtr, uint32_t commandBlockPtr),
     (pathPtr, perm, attr, callbackPtr, commandBlockPtr));
 
 NAND_ASYNC_FWD_BODY(NANDPrivateCreateDirAsync_HLE, NANDCreateDir_HLE,
     (uint32_t pathPtr, uint32_t perm, uint32_t attr, uint32_t callbackPtr, uint32_t commandBlockPtr),
     (pathPtr, perm, attr))
-#if 0  // BW2: NAND::Private::CreateDirAsync has no named BW2 equivalent
-PPC_NATIVE_OVERRIDE(8019BCC8, NANDPrivateCreateDirAsync_HLE, int32_t,
+PPC_NATIVE_OVERRIDE(802BCAAC, NANDPrivateCreateDirAsync_HLE, int32_t,
     (uint32_t pathPtr, uint32_t perm, uint32_t attr, uint32_t callbackPtr, uint32_t commandBlockPtr),
     (pathPtr, perm, attr, callbackPtr, commandBlockPtr));
-#endif
 
 NAND_ASYNC_FWD_BODY(NANDPrivateDeleteAsync_HLE, NANDDelete_HLE,
     (uint32_t pathPtr, uint32_t callbackPtr, uint32_t commandBlockPtr),
@@ -235,6 +233,17 @@ NAND_ASYNC_FWD_BODY(NANDPrivateGetTypeAsync_HLE, NANDGetType_HLE,
 PPC_NATIVE_OVERRIDE(802BE554, NANDPrivateGetTypeAsync_HLE, int32_t,
     (uint32_t pathPtr, uint32_t outTypePtr, uint32_t callbackPtr, uint32_t commandBlockPtr),
     (pathPtr, outTypePtr, callbackPtr, commandBlockPtr));
+
+// BW2: NANDCheckAsync(fsBlock, inode, answer, callback, block). The translated one asks
+// ISFS_GetUsageAsync, which fails (-101) because the native NANDInit never opens /dev/fs
+// for the guest, and the game reports the system memory as damaged.
+extern "C" int32_t NANDCheck_HLE(uint32_t blockSize, uint32_t blockCount, uint32_t outResults);
+NAND_ASYNC_FWD_BODY(NANDCheckAsync_HLE, NANDCheck_HLE,
+    (uint32_t fsBlock, uint32_t inode, uint32_t answerPtr, uint32_t callbackPtr, uint32_t commandBlockPtr),
+    (fsBlock, inode, answerPtr))
+PPC_NATIVE_OVERRIDE(802BE8F8, NANDCheckAsync_HLE, int32_t,
+    (uint32_t fsBlock, uint32_t inode, uint32_t answerPtr, uint32_t callbackPtr, uint32_t commandBlockPtr),
+    (fsBlock, inode, answerPtr, callbackPtr, commandBlockPtr));
 
 // NANDSafeOpen/NANDSafeClose crash-safe file replacement, mirroring console semantics (nandSafeOpen
 // @ 0x8019CB80, nandSafeClose @ 0x8019CF30): write modes copy the original to a same-volume scratch
