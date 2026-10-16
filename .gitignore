@@ -74,3 +74,13 @@ output.txt
 
 # Operating System
 .DS_Store
+
+# BW2 port: game data and derived files (never versioned)
+*.sel
+*.rso
+*.wia
+*.gcz
+/game-data/
+/projects/bw2/MAP.txt
+/projects/bw2/map_report.json
+/logs/
