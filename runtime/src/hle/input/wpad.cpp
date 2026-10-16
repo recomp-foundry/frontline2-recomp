@@ -76,17 +76,13 @@ extern "C" int32_t WPADInitSub_HLE()
     }
     return kStatusOk;
 }
-#if 0  // BW2: WPADiInitSub has no named BW2 equivalent
-PPC_NATIVE_OVERRIDE(801BF3B4, WPADInitSub_HLE, int32_t, (), ());
-#endif
+PPC_NATIVE_OVERRIDE(802D9C1C, WPADInitSub_HLE, int32_t, (), ());
 
 extern "C" int32_t WPADInit_HLE()
 {
     return InitializeWpadLibrary();
 }
-#if 0  // BW2: WPAD::Init has no named BW2 equivalent
-PPC_NATIVE_OVERRIDE(801BF5C4, WPADInit_HLE, int32_t, (), ());
-#endif
+PPC_NATIVE_OVERRIDE(802D9E2C, WPADInit_HLE, int32_t, (), ());
 
 extern "C" int32_t WUDGetStatus_HLE()
 {

@@ -229,25 +229,42 @@ def boundary_ok(t, allow_branch):
     return t in starts or prologue_at(t) or after_terminator(t, allow_branch)
 
 
-# Data words pointing into text, grouped into runs of consecutive pointers.
+# Data words pointing into text, grouped into runs of consecutive pointers (with the address
+# of the run's first word, to look at the words before it).
 runs = []
 for s, e in data:
-    cur = []
+    cur, cur_at = [], None
     for a in range((s + 3) & ~3, e - 3, 4):
         v = word(a)
         if in_text(v):
+            if not cur:
+                cur_at = a
             cur.append(v)
         else:
             if cur:
-                runs.append(cur)
+                runs.append((cur_at, cur))
             cur = []
     if cur:
-        runs.append(cur)
+        runs.append((cur_at, cur))
+
+
+def is_jump_table(at, run):
+    """A switch table's targets are case labels inside one function; a vtable's (or any
+    function-pointer table's) are separate functions, at least one already known."""
+    if len(run) < 3:
+        return False
+    known = sorted(starts)
+    owners = set()
+    for t in run:
+        if t in starts:
+            return False  # a known function start is never a case label
+        owners.add(known[bisect_right(known, t) - 1])
+    return len(owners) == 1
+
 
 jump_tables = 0
-for run in runs:
-    span = max(run) - min(run)
-    if len(run) >= 3 and span < 0x1000 and not all(t in starts for t in run):
+for at, run in runs:
+    if is_jump_table(at, run):
         jump_tables += 1  # switch table: its targets are case labels, not functions
         continue
     table = len(run) >= 2  # vtable or function-pointer table

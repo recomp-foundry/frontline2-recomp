@@ -334,8 +334,8 @@ void SystemBridge::Initialize() {
     // These set up vtables and other critical infrastructure
     RT_LOG(RT_TAG_RUNTIME) << "Running static constructors for main DOL..." << std::endl;
 
-    const uint32_t dolCtorStart = 0x8047FE80; // BW2 .ctors (DOL data2)
-    const uint32_t dolCtorEnd = 0x80480328;   // 298 entries, then zero padding
+    const uint32_t dolCtorStart = 0; // BW2: __start runs the .ctors (0x8047FE80) via __init_user after OSInit
+    const uint32_t dolCtorEnd = 0;
 
     int dolCount = 0;
     for (uint32_t addr = dolCtorStart; addr < dolCtorEnd; addr += 4) {

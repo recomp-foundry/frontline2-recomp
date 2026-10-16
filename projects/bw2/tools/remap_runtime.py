@@ -15,9 +15,9 @@ these files only after the last run, or fold them into the inputs.
       rewritten from addresses.csv or, for an MKW function start, by name;
       otherwise left as is and listed as unresolved
   runtime/src/hle/gx/gx_fatal_stubs.cpp ->
-      regenerated: upstream's stubs whose function exists in BW2, plus every
-      named BW2 GX function that no native hook covers, so an unported GX
-      call stops loudly instead of running translated FIFO code
+      regenerated with upstream's stubs whose function exists in BW2. Other
+      GX functions run translated: the runtime takes their writes to the
+      FIFO at 0xCC008000 (gx_fifo.cpp, HleFifoWrite)
 
 Name matching and macro list follow NSMB-Wii's apply_nsmbw_remap.py /
 hook_inventory.py (GPL-3.0).
@@ -287,9 +287,6 @@ for m in STUB.finditer(stub_src):
         stub_kept += 1
     else:
         stub_dropped += 1
-for a, n in bw2.items():
-    if n and re.match(r"_*GX[A-Z]", n) and a not in covered_bw2 and a not in stubs:
-        stubs[a] = n
 stub_body = "".join(
     f'GX_FATAL_STUB({a:08x}, "{n}") PPC_NATIVE_OVERRIDE_VOID({a:08x}, gx_stub_{a:08x}, '
     f'(CpuContext* ctx), (ctx));\n' for a, n in sorted(stubs.items()))

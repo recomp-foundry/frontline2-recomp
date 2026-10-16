@@ -98,9 +98,7 @@ extern "C" uint32_t PAD__Init_HLE()
 {
     return PADInit() ? 1u : 0u;
 }
-#if 0  // BW2: PAD::Init has no named BW2 equivalent
-PPC_NATIVE_OVERRIDE(801AF2F0, PAD__Init_HLE, uint32_t, (), ());
-#endif
+PPC_NATIVE_OVERRIDE(802E5B74, PAD__Init_HLE, uint32_t, (), ());
 
 // PADRead: gathers every GameCube pad source for the frame and writes the statuses to guest memory.
 extern "C" uint32_t PAD__Read_HLE(uint32_t statusPtr)

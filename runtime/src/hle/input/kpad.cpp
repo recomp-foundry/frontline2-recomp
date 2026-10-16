@@ -238,10 +238,8 @@ extern "C" int32_t KPAD__Read_HLE(uint32_t chan, uint32_t statusPtr, uint32_t co
         return 0;
     }
 }
-#if 0  // BW2: KPAD::Read has no named BW2 equivalent
-PPC_NATIVE_OVERRIDE(80197380, KPAD__Read_HLE, int32_t, (uint32_t chan, uint32_t statusPtr, uint32_t count),
+PPC_NATIVE_OVERRIDE(802B6304, KPAD__Read_HLE, int32_t, (uint32_t chan, uint32_t statusPtr, uint32_t count),
          (chan, statusPtr, count));
-#endif
 
 // KPADGetUnifiedWpadStatus: the raw WPAD status behind KPADStatus. The game
 // reads the Classic Controller's buttons, sticks and triggers from here. The

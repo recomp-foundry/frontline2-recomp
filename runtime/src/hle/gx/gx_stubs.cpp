@@ -1,5 +1,6 @@
 #include "gx_internal.h"
 #include "runtime_log.h"
+#include "bw2_hle.h"
 
 extern "C" void __GXSetSUTexRegs();
 
@@ -17,7 +18,7 @@ extern "C" void GX_HLE_FIFO_Write16(uint16_t val) { HleFifoWrite(static_cast<u32
 extern "C" void GX_HLE_FIFO_Write8(uint8_t val) { HleFifoWrite(static_cast<u32>(val), 1); }
 
 extern "C" void GX__SetDrawSync_8016ed08(uint32_t token) {
-    (void)token;
+    ::Bw2RecordDrawSyncToken(token); // BW2: GXReadDrawSync returns it
     try { uint32_t gd = Memory::Read32(kGXDataPtrAddr); if (gd) {
         if (Memory::Read32(gd + 0x5FCu)) GX__SetDirtyState_8016ee78();
         Memory::Write16(gd + 2, 0);

@@ -177,3 +177,7 @@ mkw_addr,action,bw2_addr,name,evidence
 0x801D8D30,disable,,NHTTPStartup,no named RBWE01 equivalent; call sites stubbed via source_edits.csv
 0x801D9E94,disable,,NHTTPi_GetSystemInfoP,no named RBWE01 equivalent; call sites stubbed via source_edits.csv
 0x8055531C,disable,,RelProlog,MKW StaticR.rel prolog; call sites stubbed via source_edits.csv
+0x801BF5C4,bw2,0x802D9E2C,WPADInit,registers a shutdown function then calls WUDInit (0x802690E0) and WPADiInitSub (0x802D9C1C); called from KPADInit
+0x801BF3B4,bw2,0x802D9C1C,WPADiInitSub,"sets up thread queues, SC Bluetooth settings and the periodic WPAD alarm; called by WPADInit"
+0x80197380,bw2,0x802B6304,KPADRead,"largest KPAD routine: WPADProbe, WPADSetSamplingCallback, KPADStatus stride 0x84 (mulli r30,0x84)"
+0x801AF2F0,bw2,0x802E5B74,PADInit,"registers the ""<< RVL_SDK - PAD"" version string (-0x47A0(r13) style pointer)"

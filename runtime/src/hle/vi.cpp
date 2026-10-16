@@ -1,6 +1,7 @@
 #include "hle_stubs.h"
 #include "memory.h"
 #include "abi_bridge.h"
+#include "bw2_hle.h"
 #include "guest_interrupt_context.h"
 #include "ppc_runtime.h"
 #include "aurora_events.h"
@@ -395,6 +396,7 @@ bool AdvanceDueRetraces(CpuContext* ctx, int maxToProcess, bool serviceAurora)
 
 
         AdvanceRetrace(ctx, target, serviceAurora);
+        ::Bw2DeliverGxBreakpoint(ctx); // BW2: GX FIFO breakpoint callback (hle/bw2/gx_breakpoint.cpp)
         advancedAny = true;
     }
 
