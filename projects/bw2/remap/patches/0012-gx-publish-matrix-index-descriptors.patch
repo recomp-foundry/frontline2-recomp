@@ -1,0 +1,16 @@
+diff -ruN a/runtime/src/hle/gx/gx_dl.cpp b/runtime/src/hle/gx/gx_dl.cpp
+--- a/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 16:46:08
++++ b/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 16:46:08
+@@ -1158,6 +1158,12 @@
+             (type == GX_INDEX8 || type == GX_INDEX16)) {
+             needsPublish = !AuroraVtxDescMatchesLive(gxAttr, type);
+         }
++        // BW2: the GXSetVtxDesc hook keeps matrix-index attributes out of Aurora, so
++        // a mirror resync can mark PNMTXIDX as applied while Aurora never saw it; its
++        // skinned meshes then decode one byte short per vertex. Check them live too.
++        if (!needsPublish && IsMatrixIndexAttr(gxAttr)) {
++            needsPublish = !AuroraVtxDescMatchesLive(gxAttr, type);
++        }
+         if (needsPublish) {
+             GXSetVtxDesc(gxAttr, type);
+             s_appliedVtxDesc[attr] = type;

@@ -1486,9 +1486,37 @@ static bool cp_register_write_unchanged(u8 addr, u32 value) {
   return false;
 }
 
+// The __gx shadow of the vertex descriptor and attribute formats must follow every
+// CP write, including those inside display lists. Otherwise the next GXSetVtxDesc /
+// GXSetVtxAttrFmt flushes the whole register from a stale shadow and brings back
+// attributes a list already removed (BW2: its mesh lists write VCD/VAT directly and
+// the runtime publishes only the attributes that changed).
+static void sync_gx_shadow_from_cp(u8 addr, u32 value) {
+  if (addr == 0x50) {
+    __gx->vcdLo = value;
+    const u32 nrm = (value >> 11) & 3u;
+    if (nrm == 0) {
+      __gx->hasNrms = 0;
+      __gx->hasBiNrms = 0;
+    } else {
+      __gx->nrmType = static_cast<GXAttrType>(nrm);
+      if (!__gx->hasBiNrms) __gx->hasNrms = 1;
+    }
+  } else if (addr == 0x60) {
+    __gx->vcdHi = value;
+  } else if (addr >= 0x70 && addr <= 0x77) {
+    __gx->vatA[addr - 0x70] = value;
+  } else if (addr >= 0x80 && addr <= 0x87) {
+    __gx->vatB[addr - 0x80] = value;
+  } else if (addr >= 0x90 && addr <= 0x97) {
+    __gx->vatC[addr - 0x90] = value;
+  }
+}
+
 // CP register handler - decodes CP register writes and updates g_gxState
 static void handle_cp(u8 addr, u32 value, bool bigEndian) {
   if (cp_register_write_unchanged(addr, value)) return;
+  sync_gx_shadow_from_cp(addr, value);
 
   switch (addr) {
   // VCD low (0x50)

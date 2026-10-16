@@ -813,6 +813,31 @@ static bool DisplayListMayContainDraw(const uint8_t* data, uint32_t nbytes) {
     return !WalkDisplayList(data, nbytes, visitor, 0);
 }
 
+// BW2: a register-only list still changes the vertex layout through its CP writes
+// (BW2 sets the descriptor and attribute formats this way before each mesh list).
+// Aurora decodes those writes itself; the HLE state has to follow, or the next list
+// that draws republishes the stale layout over them and Aurora decodes its vertices
+// with the wrong size.
+struct DlCpStateVisitor {
+    static constexpr int kMaxDepth = 8;
+    static constexpr bool kHandlesDraw = false;
+
+    bool OnNop(uint8_t) { return true; }
+    bool OnBpReg(const uint8_t*, uint32_t) { return true; }
+    bool OnCpReg(const uint8_t*, uint8_t reg, uint32_t value) { ApplyCpRegWrite(reg, value); return true; }
+    bool OnXfReg(const uint8_t*, uint32_t) { return true; }
+    bool OnIndexedXf(const uint8_t*, uint8_t, uint32_t) { return true; }
+    bool OnInvalidateVertexCache(uint8_t) { return true; }
+    bool OnUnknownCommand(uint8_t) { return false; }
+    bool OnCallDisplayList(uint32_t addr, uint32_t size, int depth) {
+        if (addr == 0 || size == 0) return true;
+        const uint8_t* nested = static_cast<const uint8_t*>(GuestToHostPtr(addr, size));
+        if (!nested) return false;
+        DlCpStateVisitor child;
+        return WalkDisplayList(nested, size, child, depth + 1);
+    }
+};
+
 // Interpreter fallback
 struct DlInterpretVisitor {
     static constexpr int kMaxDepth = 8;
@@ -1133,6 +1158,12 @@ static void ApplyAuroraVtxDesc() {
             (type == GX_INDEX8 || type == GX_INDEX16)) {
             needsPublish = !AuroraVtxDescMatchesLive(gxAttr, type);
         }
+        // BW2: the GXSetVtxDesc hook keeps matrix-index attributes out of Aurora, so
+        // a mirror resync can mark PNMTXIDX as applied while Aurora never saw it; its
+        // skinned meshes then decode one byte short per vertex. Check them live too.
+        if (!needsPublish && IsMatrixIndexAttr(gxAttr)) {
+            needsPublish = !AuroraVtxDescMatchesLive(gxAttr, type);
+        }
         if (needsPublish) {
             GXSetVtxDesc(gxAttr, type);
             s_appliedVtxDesc[attr] = type;
@@ -1318,6 +1349,31 @@ extern "C" void GxNotifyDisplayListMemoryWrite(uint32_t addr, uint32_t size) {
     GxGuestWrite::NotifyWrite(addr, size);
 }
 
+namespace {
+// BW2: the scan leaves the HLE vertex state where the list ends, but its draws run
+// with the state it starts from (BW2's mesh lists draw first and reset the
+// descriptor at the end). Aurora must be handed the entry state and decode the
+// list's own CP writes in order; afterwards the HLE state moves on to the end state.
+// Constructed before the Apply* calls; Finish() after GXCallDisplayList. Leaving
+// without Finish() keeps the entry state, which the interpreter fallback expects.
+class EntryLayout {
+public:
+    EntryLayout(bool active, const HleGxVertexStateSnapshot& entry) : active_(active) {
+        if (active_) {
+            exit_ = CaptureGxVertexState();
+            RestoreGxVertexState(entry);
+        }
+    }
+    void Finish() const {
+        if (active_) RestoreGxVertexState(exit_);
+    }
+
+private:
+    bool active_;
+    HleGxVertexStateSnapshot exit_{};
+};
+} // namespace
+
 extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes) {
     if (nbytes == 0 || listAddr == 0) return;
     try {
@@ -1343,6 +1399,8 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
             GXMarkFrameWork();
             ApplyAuroraMatrixArraysFromHle();
             GXCallDisplayList(list, nbytes);
+            DlCpStateVisitor cpState;  // BW2: the HLE layout follows the list's CP writes
+            WalkDisplayList(list, nbytes, cpState, 0);
             // The republish is required even for register-only lists (verified by
             // experiment: dropping it corrupts in-race geometry decode). It is
             // instead memoized inside SyncAppliedVtxStateFromHleReal, so a run of
@@ -1466,6 +1524,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
 
         if (needsFlatten) {
             bool flattenApplyOk = flattenOk && scanOk && auroraStream != nullptr && auroraStreamBytes != 0;
+            const EntryLayout entryLayout(dlHasCpWrites && haveStateBeforeScan, stateBeforeScan);
             if (flattenApplyOk) {
                 ApplyAuroraVtxDesc();
                 ApplyAuroraVtxAttrFmtForDisplayList(dlVtxFmt, dlVtxFmtMixed);
@@ -1479,6 +1538,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
                 EnsureAuroraFrameActive();
                 GXMarkFrameWork();
                 GXCallDisplayList(auroraStream, auroraStreamBytes);
+                entryLayout.Finish();
                 // No flip back to GX_DIRECT here
                 SyncAppliedVtxStateFromHleReal();
                 return;
@@ -1488,6 +1548,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
             bool applyOk = scanOk;
             bool arraysOk = false;
             bool xfOk = false;
+            const EntryLayout entryLayout(dlHasCpWrites && haveStateBeforeScan, stateBeforeScan);
             if (scanOk) {
                 ApplyAuroraVtxDesc();
                 ApplyAuroraVtxAttrFmtForDisplayList(dlVtxFmt, dlVtxFmtMixed);
@@ -1499,6 +1560,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
                 EnsureAuroraFrameActive();
                 GXMarkFrameWork();
                 GXCallDisplayList(list, nbytes);
+                entryLayout.Finish();
 
                 SyncAppliedVtxStateFromHleReal();
                 return;
