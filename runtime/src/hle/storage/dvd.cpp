@@ -1,4 +1,5 @@
 ﻿#include "hle_stubs.h"
+#include "bw2_hle.h"
 #include "isa/big_endian.h"
 #include "hle/dvd_contract.h"
 #include "hle/runtime_parse_helpers.h"
@@ -906,6 +907,7 @@ extern "C" int32_t DVDReadPrio_8015E834(uint32_t fileInfoPtr, uint32_t bufferPtr
         (uOffset == 0 || HostPathText(entry.hostPath).find(".thp") != std::string::npos)) {
         std::fprintf(stderr, "[bw2-dvd] %s +%u (%u bytes)\n", HostPathText(entry.hostPath).c_str(), uOffset, uLength);
     }
+    if (uOffset == 0) ::Bw2NoteDvdRead(HostPathText(entry.hostPath).c_str()); // BW2: autoplay waits
     std::vector<uint8_t> tempBuf;
     DvdReadContract::HostReadFailure failure;
     if (!DvdReadContract::ReadExact(entry.hostPath, uOffset, uLength, tempBuf, failure)) {

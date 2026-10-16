@@ -28,3 +28,7 @@ void Bw2MirrorDispCopyDst(unsigned int width);
 // True when channel `chan` is the keyboard/mouse remote (channel 0 with no real
 // remote): WPADProbe and WPADGetInfoAsync report it as a remote with Nunchuk.
 bool Bw2KeyboardRemoteConnected(unsigned int chan);
+
+// Autoplay script (hle/bw2/keyboard_remote.cpp): the DVD layer reports each
+// file's first read, which BW2_AUTOSCRIPT "wait=" steps match against.
+void Bw2NoteDvdRead(const char* hostPath);
