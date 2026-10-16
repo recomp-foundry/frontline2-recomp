@@ -248,9 +248,26 @@ for s, e in data:
         runs.append((cur_at, cur))
 
 
+# Code addresses that materialize each data address (lis + addi/ori), to tell who uses a table.
+materialized_at = {}
+for s_, e_ in text:
+    hi_regs = {}
+    for pc in range(s_, e_, 4):
+        w = word(pc)
+        op, rd, ra, imm = w >> 26, (w >> 21) & 31, (w >> 16) & 31, w & 0xFFFF
+        if op == 15 and ra == 0:
+            hi_regs[rd] = imm << 16
+        elif op == 14 and ra in hi_regs:
+            materialized_at.setdefault((hi_regs[ra] + (imm - 0x10000 if imm & 0x8000 else imm)) & 0xFFFFFFFF,
+                                       []).append(pc)
+        elif op == 24 and rd in hi_regs:
+            materialized_at.setdefault(hi_regs[rd] | imm, []).append(pc)
+
+
 def is_jump_table(at, run):
-    """A switch table's targets are case labels inside one function; a vtable's (or any
-    function-pointer table's) are separate functions, at least one already known."""
+    """A switch table's targets are case labels inside one function, and that same function loads
+    the table's address (lis/addi before its bctr). A vtable's entries are separate functions
+    (often tiny this-adjust thunks packed together) and its address is loaded by constructors."""
     if len(run) < 3:
         return False
     known = sorted(starts)
@@ -259,7 +276,12 @@ def is_jump_table(at, run):
         if t in starts:
             return False  # a known function start is never a case label
         owners.add(known[bisect_right(known, t) - 1])
-    return len(owners) == 1
+    if len(owners) != 1:
+        return False
+    owner = owners.pop()
+    i = bisect_right(known, owner)
+    owner_end = known[i] if i < len(known) else owner + 0x10000
+    return any(owner <= pc < owner_end for pc in materialized_at.get(at, []))
 
 
 jump_tables = 0

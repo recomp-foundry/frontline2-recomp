@@ -10,8 +10,11 @@
 #include "bw2_hle.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include "abi_bridge.h"
+#include "fiber_manager.h"
+#include "guest_interrupt_context.h"
 #include "hle_stubs.h"
 #include "memory.h"
 
@@ -64,3 +67,29 @@ extern "C" uint32_t GXReadDrawSync_bw2() {
     return g_lastDrawSyncToken.load(std::memory_order_acquire);
 }
 PPC_NATIVE_OVERRIDE(802AD91C, GXReadDrawSync_bw2, uint32_t, (), ());
+
+// GXGetCurrentGXThread is a one-load leaf the translator inlines. BW2's frame
+// sync (0x8032E7E0) spins on it until its VI pre-retrace callback has swapped
+// the last queued frame; on the console the retrace interrupt lands during the
+// spin. As a native call it gives the spin the same chance GX drawing gets:
+// due retraces and alarms are serviced as interrupts, at most once per ms.
+namespace {
+constexpr uint32_t kGxCurrentThreadAddr = 0x805FFD8Cu;  // -0x13D4(r13)
+thread_local std::chrono::steady_clock::time_point g_nextSpinPoll{};
+} // namespace
+
+extern "C" uint32_t GXGetCurrentGXThread_bw2() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= g_nextSpinPoll) {
+        g_nextSpinPoll = now + std::chrono::milliseconds(1);
+        if (Fiber::GuestFiberManager::IsInitialized()) {
+            VI_HLE_ProcessRetracesDeferred(8);
+            OS_HLE_ProcessAlarmsDeferred(8);
+        } else if (TryGetCpuContext() != nullptr) {
+            GuestInterruptCallbackContext interrupt;
+            VI_HLE_PollRetrace(interrupt.get());
+        }
+    }
+    return Memory::Read32(kGxCurrentThreadAddr);
+}
+PPC_NATIVE_OVERRIDE(802AC658, GXGetCurrentGXThread_bw2, uint32_t, (), ());

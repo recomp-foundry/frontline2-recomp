@@ -901,6 +901,11 @@ extern "C" int32_t DVDReadPrio_8015E834(uint32_t fileInfoPtr, uint32_t bufferPtr
                             "DVD read destination is outside guest memory");
     }
 
+    // BW2: BW2_TRACE_DVD=1 logs the first read of each file and every .thp read (boot tracing).
+    if (std::getenv("BW2_TRACE_DVD") != nullptr &&
+        (uOffset == 0 || HostPathText(entry.hostPath).find(".thp") != std::string::npos)) {
+        std::fprintf(stderr, "[bw2-dvd] %s +%u (%u bytes)\n", HostPathText(entry.hostPath).c_str(), uOffset, uLength);
+    }
     std::vector<uint8_t> tempBuf;
     DvdReadContract::HostReadFailure failure;
     if (!DvdReadContract::ReadExact(entry.hostPath, uOffset, uLength, tempBuf, failure)) {
