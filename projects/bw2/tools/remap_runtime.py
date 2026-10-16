@@ -9,6 +9,7 @@ these files only after the last run, or fold them into the inputs.
       SDK name in projects/bw2/MAP.txt gives the BW2 address; otherwise the
       statement is wrapped in "#if 0 // BW2: <reason>" (the translator then
       ignores it, see NativeSourceParsing.StripDisabledBlocks)
+  func_8xxxxxxx symbol (a direct call into translated code) -> renamed like a hook
   0x80xxxxxx literal ->
       kept below 0x80004000 (OS low memory, fixed by the hardware);
       rewritten from addresses.csv or, for an MKW function start, by name;
@@ -43,6 +44,7 @@ HOOK = re.compile(
     r"\b(?P<macro>PPC_NATIVE_OVERRIDE(?:_VOID)?|REGISTER_NATIVE_FUNCTION(?:_AS)?|REGISTER_TRANSLATED_FUNCTION|"
     r"MKW_KNOWN_TYPED_NATIVE|MKW_KNOWN_NATIVE_CPU_CALL)\s*\(\s*(?P<prefix>(?:0x)?)(?P<addr>[0-9A-Fa-f]{8})")
 LITERAL = re.compile(r"0x(?P<addr>80[0-9A-Fa-f]{6})")
+FUNC_SYMBOL = re.compile(r"\bfunc_(?P<addr>8[0-9A-Fa-f]{7})\b")  # direct calls into translated code
 SDK_NS = r"OS|DVD|GX|VI|AI|AX|DSP|SC|NAND|PAD|SI|EXI|IPC|WPAD|KPAD|PPC|DC|IC|LC|THP|WUD|ARC|MEM|NWC24"
 LABEL = re.compile(r"_(caseD|case|switch|default|loop|label)_?|_[0-9A-Fa-f]{8}$|\+0x")
 
@@ -249,6 +251,18 @@ for path in git_ls(RUNTIME_DIRS):
         if new is not None and new != addr:
             edits.append((m.start("addr"), m.end("addr"), same_style(m.group("addr"), new)))
         elif new is None and how != "manual disable" and not any(a <= m.start() < b for a, b in comments):
+            unresolved.append(rows[-1])
+    for m in FUNC_SYMBOL.finditer(text):
+        if any(a <= m.start() < b for a, b in protected + comments):
+            continue
+        addr = int(m.group("addr"), 16)
+        new, how, reason = resolve(addr)
+        line = text.count("\n", 0, m.start()) + 1
+        rows.append({"file": path, "line": line, "kind": "symbol", "macro": "", "mkw_addr": f"0x{addr:08X}",
+                     "bw2_addr": f"0x{new:08X}" if new else "", "how": how, "reason": reason})
+        if new is not None and new != addr:
+            edits.append((m.start("addr"), m.end("addr"), f"{new:08X}"))
+        elif new is None and how != "manual disable":
             unresolved.append(rows[-1])
     if edits or protected:
         out, last = [], 0

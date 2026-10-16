@@ -173,3 +173,7 @@ mkw_addr,action,bw2_addr,name,evidence
 0x8000A400,disable,,recomp_mod_loader.cpp constant,MKW StaticR.rel loader ranges; BW2 has no REL so the check never matches
 0x801A6000,disable,,recomp_mod_loader.cpp constant,MKW StaticR.rel loader ranges; BW2 has no REL so the check never matches
 0x801A7000,disable,,recomp_mod_loader.cpp constant,MKW StaticR.rel loader ranges; BW2 has no REL so the check never matches
+0x8012B830,disable,,AXFXReverbStdExpCallback,no named RBWE01 equivalent; call sites stubbed via source_edits.csv
+0x801D8D30,disable,,NHTTPStartup,no named RBWE01 equivalent; call sites stubbed via source_edits.csv
+0x801D9E94,disable,,NHTTPi_GetSystemInfoP,no named RBWE01 equivalent; call sites stubbed via source_edits.csv
+0x8055531C,disable,,RelProlog,MKW StaticR.rel prolog; call sites stubbed via source_edits.csv

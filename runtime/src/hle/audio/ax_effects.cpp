@@ -10,7 +10,7 @@
 #include <cstring>
 
 
-extern "C" void func_8012B830(CpuContext* ctx);
+static void func_8012B830(CpuContext*) {} // BW2: MKW AXFXReverbStdExpCallback fallback; the hook using it is disabled
 
 #if defined(__clang__)
 // PowerPC uses discrete fmuls/fadds; a fused multiply-add would change sample rounding.
@@ -371,7 +371,7 @@ extern "C" void AXFXReverbStdExpCallback_8012b830(CpuContext* ctx) {
     ReverbStd::Render(stateAddr, frame);
 }
 
-#if 0  // BW2: AXFXReverbStdExpCallback has no named BW2 equivalent
+#if 0  // BW2: no named RBWE01 equivalent; call sites stubbed via source_edits.csv
 REGISTER_NATIVE_FUNCTION_AS(0x8012B830, AXFXReverbStdExpCallback_8012b830,
                             "AXFXReverbStdExpCallback_8012b830");
 #endif

@@ -18,11 +18,11 @@
 #include "runtime_log.h"
 #include "system_bridge.h"
 
-extern "C" void func_801A961C(CpuContext* ctx);
-extern "C" void func_8055531C(CpuContext* ctx);
+extern "C" void func_802C7F9C(CpuContext* ctx);
+static void func_8055531C(CpuContext*) {} // BW2: MKW StaticR.rel prolog; BW2 has no REL
 
 extern "C" void OSInitAlarm_RecompModLateInit_801a961c(CpuContext* ctx) {
-    func_801A961C(ctx);
+    func_802C7F9C(ctx);
 }
 
 REGISTER_NATIVE_FUNCTION_AS(0x802C7F9C, OSInitAlarm_RecompModLateInit_801a961c, "OSInitAlarm_RecompModLateInit_801a961c");
@@ -33,7 +33,7 @@ extern "C" void StaticRProlog_RecompModInit_8055531c(CpuContext* ctx) {
     RecompMod::RunPostRelInitializers();
 }
 
-#if 0  // BW2: RelProlog has no named BW2 equivalent
+#if 0  // BW2: MKW StaticR.rel prolog; call sites stubbed via source_edits.csv
 REGISTER_NATIVE_FUNCTION_AS(0x8055531C, StaticRProlog_RecompModInit_8055531c, "StaticRProlog_RecompModInit_8055531c");
 #endif
 

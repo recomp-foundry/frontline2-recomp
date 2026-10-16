@@ -5,8 +5,9 @@
 
 namespace NetworkHle {
 
-extern "C" void func_801D8D30(CpuContext* ctx);
-extern "C" void func_801D9E94(CpuContext* ctx);
+// BW2: MKW NHTTP functions; the hooks using them are disabled.
+static void func_801D8D30(CpuContext*) {}
+static void func_801D9E94(CpuContext*) {}
 
 static uint32_t GetNHttpSystemInfo(CpuContext* ctx, uint32_t& savedR3, uint32_t& savedR4, uint32_t& savedR5) {
     savedR3 = ctx->gpr[3];
@@ -63,7 +64,7 @@ extern "C" void NHTTPStartup_Reentrant_HLE_801d8d30(CpuContext* ctx) {
     }
 }
 
-#if 0  // BW2: NHTTPStartup has no named BW2 equivalent
+#if 0  // BW2: no named RBWE01 equivalent; call sites stubbed via source_edits.csv
 REGISTER_NATIVE_FUNCTION_AS(0x801D8D30, NHTTPStartup_Reentrant_HLE_801d8d30, "NHTTPStartup_Reentrant_HLE_801d8d30");
 #endif
 
