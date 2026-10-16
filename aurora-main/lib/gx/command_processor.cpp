@@ -10,6 +10,8 @@
 #include "shader_info.hpp"
 #include "../internal.hpp"
 
+#include <aurora/aurora.h>
+
 #include <absl/container/flat_hash_map.h>
 #include <tracy/Tracy.hpp>
 
@@ -23,6 +25,7 @@
 #include <vector>
 
 namespace aurora::gx::fifo {
+AuroraArrayBaseResolver g_arrayBaseResolver = nullptr;
 static Module Log("aurora::gx::fifo");
 
 using IndexBuffer = std::vector<u16>;
@@ -1561,7 +1564,23 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
     }
     // Array base addresses (0xA0-0xAF)
     else if (addr >= 0xA0 && addr <= 0xAF) {
-      Log.error("CP_REG_ARRAYBASE_ID is not supported on Aurora. Use GX_LOAD_AURORA_ARRAYBASE instead.");
+      const u32 attrIdx = addr - 0xA0 + GX_VA_POS;
+      uint32_t arraySize = 0;
+      const void* newData = g_arrayBaseResolver != nullptr ? g_arrayBaseResolver(value, &arraySize) : nullptr;
+      if (newData == nullptr || attrIdx >= GX_VA_MAX_ATTR) {
+        Log.error("CP_REG_ARRAYBASE_ID {:08X} (attr {}) unresolved{}", value, attrIdx,
+                  g_arrayBaseResolver != nullptr ? "" : "; no resolver registered");
+      } else {
+        // Same state GX_LOAD_AURORA_ARRAYBASE sets; guest arrays are big-endian.
+        auto& array = g_gxState.arrays[attrIdx];
+        if (array.data != newData || array.size != arraySize || array.le) {
+          array.data = newData;
+          array.size = arraySize;
+          array.le = false;
+          array.cachedRange = {};
+          mark_pipeline_state_dirty();
+        }
+      }
     }
     // Array strides (0xB0-0xBF)
     else if (addr >= 0xB0 && addr <= 0xBF) {
@@ -2513,3 +2532,5 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
 }
 
 } // namespace aurora::gx::fifo
+
+void aurora_set_array_base_resolver(AuroraArrayBaseResolver resolver) { aurora::gx::fifo::g_arrayBaseResolver = resolver; }

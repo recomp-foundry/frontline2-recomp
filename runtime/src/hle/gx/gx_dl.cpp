@@ -1283,6 +1283,35 @@ static bool ApplyAuroraIndexedXFArraysForDisplayList(const std::array<uint32_t, 
     return ok;
 }
 
+// Matrix arrays (GX_POS_MTX_ARRAY..GX_LIGHT_ARRAY) for display lists passed to
+// Aurora verbatim: a register-only list can hold nothing but indexed XF loads (a
+// skinned model's matrix palette), and without the arrays Aurora skipped them all,
+// leaving every skinned mesh unplaced. Each set array is published sized to the
+// end of the RAM region holding it.
+static void ApplyAuroraMatrixArraysFromHle() {
+    for (int attr = GX_POS_MTX_ARRAY; attr <= GX_LIGHT_ARRAY; ++attr) {
+        const auto& arr = g_hleGxState.vtxArray[attr];
+        if (arr.base == 0 || arr.stride == 0 || arr.stride > 0xFF) {
+            continue;
+        }
+        const uint32_t base = CanonicalizeGxMainRamAddress(arr.base);
+        uint32_t end = 0;
+        if (base < Memory::kMem1Size) {
+            end = static_cast<uint32_t>(Memory::kMem1Size);
+        } else if (base >= Memory::kMem2PhysicalBase && base < Memory::kMem2PhysicalEnd) {
+            end = Memory::kMem2PhysicalEnd;
+        } else {
+            continue;
+        }
+        const uint32_t span = end - base;
+        const uint8_t* hostPtr = static_cast<const uint8_t*>(GuestToHostPtr(arr.base, span));
+        if (!hostPtr) {
+            continue;
+        }
+        ApplyAuroraArrayIfChanged(static_cast<GXAttr>(attr), hostPtr, span, static_cast<uint8_t>(arr.stride));
+    }
+}
+
 } // namespace
 
 extern "C" void GxNotifyDisplayListMemoryWrite(uint32_t addr, uint32_t size) {
@@ -1312,6 +1341,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
         if (!mayContainDraw) {
             EnsureAuroraFrameActive();
             GXMarkFrameWork();
+            ApplyAuroraMatrixArraysFromHle();
             GXCallDisplayList(list, nbytes);
             // The republish is required even for register-only lists (verified by
             // experiment: dropping it corrupts in-race geometry decode). It is
@@ -1385,7 +1415,11 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
             if (needsFlatten) {
                 RestoreGxVertexState(stateBeforeScan);
                 flattened.clear();
-                flattenOk = FlattenDisplayListForAurora(list, nbytes, flattened, dlHasArrayStateWrites,
+                // BW2: keep the list's own array base/stride writes in the stream. Its
+                // lists switch arrays between meshes; with the writes dropped, every
+                // mesh read the arrays the list ended with. Aurora resolves raw CP
+                // array bases itself now (aurora_set_array_base_resolver).
+                flattenOk = FlattenDisplayListForAurora(list, nbytes, flattened, /*skipArrayState=*/false,
                                                         &flattenVerbatim);
                 if (flattenOk) {
                     if (flattenVerbatim) {

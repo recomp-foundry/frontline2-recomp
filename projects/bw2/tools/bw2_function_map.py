@@ -120,7 +120,9 @@ def looks_like_data(t):
     word that is printable ASCII or a pointer into the image is data, not code."""
     w = word(t)
     if all(0x20 <= c <= 0x7E for c in w.to_bytes(4, "big")):
-        return True
+        # Unless a blr follows within four words: a short leaf such as RBWE01 0x8036EB78
+        # (lis r3,0x5450 = "<`TP"; addi; blr), a virtual returning a four-character type tag.
+        return not any(word(t + 4 * k) == 0x4E800020 for k in range(1, 5) if in_text(t + 4 * k))
     # A pointer such as 0x80004000 decodes as a load/store with rA = 0 ("lwz r0, 0x4000(0)"),
     # which compiled code does not emit: it addresses through r13/r2 or lis.
     return 32 <= (w >> 26) <= 55 and ((w >> 16) & 31) == 0
@@ -281,7 +283,22 @@ def is_jump_table(at, run):
     owner = owners.pop()
     i = bisect_right(known, owner)
     owner_end = known[i] if i < len(known) else owner + 0x10000
-    return any(owner <= pc < owner_end for pc in materialized_at.get(at, []))
+    users = [pc for pc in materialized_at.get(at, []) if owner <= pc < owner_end]
+    # A switch dispatches with bctr; a table of functions is called with bctrl
+    # (e.g. RBWE01 0x803D5680: lwzx r12,table; mtctr; bctrl), even when its
+    # entries sit right after the function that loads it.
+    return bool(users) and not any(calls_through_ctr(pc) for pc in users)
+
+
+def calls_through_ctr(pc):
+    """Whether the first ctr branch within 24 instructions after pc is bctrl."""
+    for a in range(pc + 4, pc + 4 + 24 * 4, 4):
+        w = word(a)
+        if w == 0x4E800421:  # bctrl
+            return True
+        if w == 0x4E800420:  # bctr
+            return False
+    return False
 
 
 # Tables of records with a code pointer in each (stride 8/12/16, e.g. {handler, 0, -1} entries

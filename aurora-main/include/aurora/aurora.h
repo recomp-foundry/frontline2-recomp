@@ -161,6 +161,11 @@ void aurora_set_present_schedule(uint64_t baseNanos, uint64_t intervalNanos);
 // slot group from this, backing off after misses. Only paced presents may report.
 void aurora_report_producer_paced(bool paced);
 void aurora_request_frame_capture(uint32_t frame, const char* outputPath);
+// Optional: resolves a raw CP array base (CP_REG_ARRAYBASE_ID, a console physical
+// address written by the game's own FIFO/display-list code) to host memory. Returns
+// nullptr when unmapped; *outSize receives the bytes readable from there.
+typedef const void* (*AuroraArrayBaseResolver)(uint32_t cpValue, uint32_t* outSize);
+void aurora_set_array_base_resolver(AuroraArrayBaseResolver resolver);
 bool aurora_flush_efb_copies_to_ram();
 bool aurora_flush_efb_copy_to_ram(void* dest);
 

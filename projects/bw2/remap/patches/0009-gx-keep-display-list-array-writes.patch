@@ -1,0 +1,16 @@
+diff -ruN a/runtime/src/hle/gx/gx_dl.cpp b/runtime/src/hle/gx/gx_dl.cpp
+--- a/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 09:35:34
++++ b/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 09:35:34
+@@ -1415,7 +1415,11 @@
+             if (needsFlatten) {
+                 RestoreGxVertexState(stateBeforeScan);
+                 flattened.clear();
+-                flattenOk = FlattenDisplayListForAurora(list, nbytes, flattened, dlHasArrayStateWrites,
++                // BW2: keep the list's own array base/stride writes in the stream. Its
++                // lists switch arrays between meshes; with the writes dropped, every
++                // mesh read the arrays the list ended with. Aurora resolves raw CP
++                // array bases itself now (aurora_set_array_base_resolver).
++                flattenOk = FlattenDisplayListForAurora(list, nbytes, flattened, /*skipArrayState=*/false,
+                                                         &flattenVerbatim);
+                 if (flattenOk) {
+                     if (flattenVerbatim) {
