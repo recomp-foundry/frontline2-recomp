@@ -80,8 +80,52 @@ void TraceGuestThreads() {
 }
 } // namespace
 
+namespace aurora::gfx {
+uint32_t current_frame() noexcept;
+}
+extern "C" void aurora_request_frame_capture(uint32_t frame, const char* outputPath);
+
+namespace {
+// BW2_CAPTURE_FRAMES=<dir>: every ~5 s ask Aurora to write the rendered frame to <dir>/frame_N.bmp
+// (the image only exists on the GPU; this terminal cannot screen-capture the window).
+void CaptureRenderedFrame() {
+    static const char* dir = std::getenv("BW2_CAPTURE_FRAMES");
+    static uint32_t retraces = 0;
+    static int index = 0;
+    if (dir == nullptr || (++retraces % 300) != 0) {
+        return;
+    }
+    static char path[1024];
+    std::snprintf(path, sizeof(path), "%s/frame_%03d.bmp", dir, index++);
+    aurora_request_frame_capture(aurora::gfx::current_frame() + 2, path);
+}
+
+// BW2_DUMP_XFB=<dir>: every ~5 s write the displayed XFB (YUY2, 640 wide) to <dir>/xfb_N.yuv.
+void DumpDisplayedXfb() {
+    static const char* dir = std::getenv("BW2_DUMP_XFB");
+    static uint32_t retraces = 0;
+    static int index = 0;
+    if (dir == nullptr || (++retraces % 300) != 0) {
+        return;
+    }
+    const uint32_t xfb = Memory::Read32(0x80600638u);  // the frame ring's displayed XFB
+    constexpr uint32_t kBytes = 640u * 528u * 2u;
+    if (xfb == 0 || !Memory::Contains(xfb, kBytes)) {
+        return;
+    }
+    char path[1024];
+    std::snprintf(path, sizeof(path), "%s/xfb_%03d.yuv", dir, index++);
+    if (FILE* f = std::fopen(path, "wb")) {
+        std::fwrite(Memory::GetPointer(xfb, kBytes), 1, kBytes, f);
+        std::fclose(f);
+    }
+}
+} // namespace
+
 void Bw2DeliverGxBreakpoint(CpuContext* ctx) {
     TraceGuestThreads();
+    DumpDisplayedXfb();
+    CaptureRenderedFrame();
     if (ctx == nullptr || !g_breakPointPending.exchange(false, std::memory_order_acq_rel)) {
         return;
     }
@@ -128,3 +172,29 @@ extern "C" uint32_t GXGetCurrentGXThread_bw2() {
     return Memory::Read32(kGxCurrentThreadAddr);
 }
 PPC_NATIVE_OVERRIDE(802AC658, GXGetCurrentGXThread_bw2, uint32_t, (), ());
+
+// __GXData copy registers as GXSetDispCopySrc (+0x230/+0x234), GXSetTexCopySrc
+// (+0x240/+0x244) and GXSetDispCopyDst (+0x238) store them in RBWE01.
+namespace {
+constexpr uint32_t kGXDataPtr = 0x806033F0u;
+}
+
+void Bw2MirrorCopySrc(bool display, unsigned int left, unsigned int top, unsigned int width, unsigned int height) {
+    const uint32_t gx = Memory::Read32(kGXDataPtr);
+    if (gx == 0) {
+        return;
+    }
+    const uint32_t topLeft = (0x49u << 24) | ((top & 0x3FFu) << 10) | (left & 0x3FFu);
+    const uint32_t size = (0x4Au << 24) | (((height - 1) & 0x3FFu) << 10) | ((width - 1) & 0x3FFu);
+    Memory::Write32(gx + (display ? 0x230u : 0x240u), topLeft);
+    Memory::Write32(gx + (display ? 0x234u : 0x244u), size);
+}
+
+void Bw2MirrorDispCopyDst(unsigned int width) {
+    const uint32_t gx = Memory::Read32(kGXDataPtr);
+    if (gx == 0) {
+        return;
+    }
+    const uint32_t stride = ((width << 1) & 0xFFFEu) >> 5;  // 32-byte units of a YUYV line
+    Memory::Write32(gx + 0x238u, (0x4Du << 24) | (stride & 0x3FFu));
+}

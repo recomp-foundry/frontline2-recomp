@@ -1,4 +1,5 @@
 #include "hle_stubs.h"
+#include "bw2_hle.h"
 #include "input_bindings.h"
 #include "memory.h"
 #include "wii_remote_input.h"
@@ -112,6 +113,7 @@ int32_t WriteStatus(uint32_t chan, uint32_t addr, const WiiRemoteInput::KpadSamp
     // the game treats as "pointing away from the screen".
     WriteZeroFloats(addr + kPos, (kAccVertical + 8 - kPos) / 4);
     Memory::Write8(addr + kDpdValidFg, 0);
+    ::Bw2WriteKeyboardRemotePointer(chan, addr); // BW2: mouse as the IR pointer
 
     const uint8_t devType = sample->hasClassic ? kDevClassic : sample->hasNunchuk ? kDevFreestyle : kDevCore;
     const uint8_t dataFormat =
@@ -231,7 +233,7 @@ extern "C" int32_t KPAD__Read_HLE(uint32_t chan, uint32_t statusPtr, uint32_t co
         return 0;
     }
     WiiRemoteInput::KpadSample sample;
-    const bool have = ReadSample(chan, sample);
+    const bool have = ReadSample(chan, sample) || ::Bw2KeyboardRemoteSample(chan, sample); // BW2: keyboard/mouse remote
     try {
         return WriteStatus(chan, statusPtr, have ? &sample : nullptr);
     } catch (const Memory::AccessViolation&) {

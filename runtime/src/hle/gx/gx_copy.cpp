@@ -1,5 +1,6 @@
 // gx_copy.cpp - Framebuffer Copy Operations
 #include "gx_internal.h"
+#include "bw2_hle.h"
 
 #include "settings_overlay.h"
 
@@ -71,11 +72,12 @@ void InvalidateEfbCopyDestinationsForRange(uint32_t addr, uint32_t size) {
 // ============================================================================
 
 extern "C" void GX__SetDispCopySrc_8016f438(uint32_t l, uint32_t t, uint32_t w, uint32_t h) {
+    ::Bw2MirrorCopySrc(true, l, t, w, h); // BW2: GXSetDispCopyYScale reads __GXData
     GXSetDispCopySrc((u16)l, (u16)t, (u16)w, (u16)h);
 }
 PPC_NATIVE_OVERRIDE_VOID(802ae2a8, GX__SetDispCopySrc_8016f438, (uint32_t l, uint32_t t, uint32_t w, uint32_t h), (l, t, w, h));
 
-extern "C" void GX__SetDispCopyDst_8016f4b8(uint32_t w, uint32_t h) { GXSetDispCopyDst((u16)w, (u16)h); }
+extern "C" void GX__SetDispCopyDst_8016f4b8(uint32_t w, uint32_t h) { ::Bw2MirrorDispCopyDst(w); GXSetDispCopyDst((u16)w, (u16)h); }
 PPC_NATIVE_OVERRIDE_VOID(802ae328, GX__SetDispCopyDst_8016f4b8, (uint32_t w, uint32_t h), (w, h));
 
 // ============================================================================
@@ -83,6 +85,7 @@ PPC_NATIVE_OVERRIDE_VOID(802ae328, GX__SetDispCopyDst_8016f4b8, (uint32_t w, uin
 // ============================================================================
 
 extern "C" void GX__SetTexCopySrc_8016f478(uint32_t l, uint32_t t, uint32_t w, uint32_t h) {
+    ::Bw2MirrorCopySrc(false, l, t, w, h); // BW2: keep __GXData in step for translated readers
     GXSetTexCopySrc((u16)l, (u16)t, (u16)w, (u16)h);
     g_texCopyState.srcLeft=(u16)l; g_texCopyState.srcTop=(u16)t;
     g_texCopyState.srcWidth=(u16)w; g_texCopyState.srcHeight=(u16)h;
