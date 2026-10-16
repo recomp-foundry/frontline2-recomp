@@ -12,7 +12,7 @@
 // CpuContextScope), making per-op flushes free. Accepted deviations (same trade Dolphin makes):
 // flush-to-zero also flushes double denormals unlike real NI, and a pre-round-flush edge near
 // FLT_MIN rounds via cvtsd2ss (or its AArch64 equivalent) instead.
-#if defined(__x86_64__)
+#if defined(MKW_HOST_SSE)
 // MXCSR: FTZ (bit 15, flushes arithmetic *output* denormals) and DAZ (bit 6, treats denormal
 // *inputs* as zero) are two separate bits on x86; both are set/cleared together here.
 inline constexpr uint32_t kMkwFpControlFlushToZeroBits = (1u << 15) | (1u << 6); // FTZ | DAZ
@@ -38,7 +38,10 @@ inline thread_local double g_mkwNiFlushThreshold = 0.0;
 // their own per-arch branch.
 inline uint32_t MkwGetHostFpControl() noexcept
 {
-#if defined(__x86_64__)
+#if defined(__EMSCRIPTEN__)
+    // WebAssembly has no FP control register: always round-to-nearest, denormals kept.
+    return 0;
+#elif defined(MKW_HOST_SSE)
     return _mm_getcsr();
 #elif defined(__aarch64__)
     uint64_t fpcr = 0;
@@ -49,7 +52,9 @@ inline uint32_t MkwGetHostFpControl() noexcept
 
 inline void MkwSetHostFpControl(uint32_t value) noexcept
 {
-#if defined(__x86_64__)
+#if defined(__EMSCRIPTEN__)
+    (void)value;
+#elif defined(MKW_HOST_SSE)
     _mm_setcsr(value);
 #elif defined(__aarch64__)
     // Read-modify-write the full 64-bit FPCR: only the low 32 bits are architecturally defined

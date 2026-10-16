@@ -1,0 +1,56 @@
+diff -ruN a/runtime/include/guest_flat_memory.h b/runtime/include/guest_flat_memory.h
+--- a/runtime/include/guest_flat_memory.h	2026-10-16 01:35:05
++++ b/runtime/include/guest_flat_memory.h	2026-10-16 01:35:05
+@@ -36,6 +36,10 @@
+ // probing to sit far below where the PIE image, heap, shared libraries and
+ // stack actually land (all clustered above ~340 GiB on a 39-bit/512 GiB system).
+ inline constexpr uintptr_t kFixedFlatGuestBase = 0x0000'0010'0000'0000ull;
++#elif defined(__EMSCRIPTEN__)
++// The web build has no flat view (web/guest_flat_memory_web.cpp): every access is
++// checked, so this base is never dereferenced.
++inline constexpr uintptr_t kFixedFlatGuestBase = 0;
+ #else
+ #error "guest_flat_memory.h has no fixed flat guest base chosen for this architecture"
+ #endif
+@@ -73,11 +77,13 @@
+ // fold this to a compile-time false: it appears in every flat access and must
+ // not become a hot-path load. Only AArch64, where the page size is a kernel
+ // configuration (4/16/64 KiB), has to probe it at runtime.
+-#if defined(_WIN32) || defined(__x86_64__)
++#if defined(_WIN32) || defined(__x86_64__) || defined(__EMSCRIPTEN__)
+ #define MKW_GUEST_FLAT_FIXED_PAGE_SIZE 1
+ #endif
+ 
+-#if defined(MKW_GUEST_FLAT_FIXED_PAGE_SIZE)
++#if defined(__EMSCRIPTEN__)
++inline constexpr bool RequiresCheckedAccess() noexcept { return true; }
++#elif defined(MKW_GUEST_FLAT_FIXED_PAGE_SIZE)
+ inline constexpr bool RequiresCheckedAccess() noexcept { return false; }
+ #else
+ extern bool g_requiresCheckedAccess;
+diff -ruN a/runtime/include/isa/ppc_isa_fpenv.h b/runtime/include/isa/ppc_isa_fpenv.h
+--- a/runtime/include/isa/ppc_isa_fpenv.h	2026-10-16 01:35:05
++++ b/runtime/include/isa/ppc_isa_fpenv.h	2026-10-16 01:35:05
+@@ -38,7 +38,10 @@
+ // their own per-arch branch.
+ inline uint32_t MkwGetHostFpControl() noexcept
+ {
+-#if defined(MKW_HOST_SSE)
++#if defined(__EMSCRIPTEN__)
++    // WebAssembly has no FP control register: always round-to-nearest, denormals kept.
++    return 0;
++#elif defined(MKW_HOST_SSE)
+     return _mm_getcsr();
+ #elif defined(__aarch64__)
+     uint64_t fpcr = 0;
+@@ -49,7 +52,9 @@
+ 
+ inline void MkwSetHostFpControl(uint32_t value) noexcept
+ {
+-#if defined(MKW_HOST_SSE)
++#if defined(__EMSCRIPTEN__)
++    (void)value;
++#elif defined(MKW_HOST_SSE)
+     _mm_setcsr(value);
+ #elif defined(__aarch64__)
+     // Read-modify-write the full 64-bit FPCR: only the low 32 bits are architecturally defined

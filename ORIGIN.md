@@ -16,6 +16,7 @@ Changes taken from other WiiCompiled forks (each in its own commit, with the sou
 | Stricter jump table detection | [Strikers-WiiCompiled](https://github.com/BlackAndBlue95/Strikers-WiiCompiled) `JumpTableDetector.cs` |
 | `#if 0` blocks hidden from marker scanning | [NSMB-Wii-Multiplayer-Recompilation](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Recompilation) `NativeSourceParsing.cs` |
 | Warning instead of abort on branches outside the image | NSMB-Wii-Multiplayer-Recompilation `Program.cs` |
+| Web toolchain (Emscripten), web page and file layer | [mh3-wii](https://github.com/Grarak/mh3-wii) (GPLv3) `cmake/toolchains/web.cmake`, `runtime/web/`, `scripts/serve-web.py`, adapted |
 
 No game code or data is part of this repository: the user's own disc is
 extracted and translated at build time.

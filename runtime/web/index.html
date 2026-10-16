@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FrontlineRecomp (web)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 12px monospace; }
+  #canvas { display: block; width: 100vw; height: 100vh; outline: none; }
+  #log { position: fixed; left: 0; bottom: 0; max-height: 30vh; overflow: auto; white-space: pre-wrap;
+         background: rgba(0,0,0,.6); padding: 4px; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+<div id="log"></div>
+<script>
+  // The page for the web build (runtime/web/). The disc is served by serve-web.py
+  // at disc/; nothing of the game is part of this build.
+  const logBox = document.getElementById('log');
+  const lines = [];
+  function log(text) {
+    console.log(text);
+    lines.push(text);
+    if (lines.length > 200) lines.shift();
+    logBox.textContent = lines.join('\n');
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+  if (!navigator.gpu) log('This browser has no WebGPU.');
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    print: log,
+    printErr: log,
+  };
+  if (new URLSearchParams(location.search).has('quiet')) logBox.style.display = 'none';
+</script>
+<script src="FrontlineRecomp.js"></script>
+</body>
+</html>

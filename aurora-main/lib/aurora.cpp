@@ -1,3 +1,6 @@
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include <aurora/aurora.h>
 
 #ifdef AURORA_ENABLE_GX
@@ -259,7 +262,7 @@ FrameWorkerState g_frameWorker;
 bool frame_worker_requested() noexcept {
 #ifdef AURORA_ENABLE_GX
   static const bool enabled = [] {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__EMSCRIPTEN__)
     // ImGui's SDL backend may raise an SDL window from ImGui::NewFrame(). On
     // macOS that reaches AppKit, whose window operations are main-thread-only;
     // doing it on the frame worker terminates the process with EXC_BREAKPOINT.
@@ -1009,7 +1012,12 @@ bool present_presentation_job(const PresentationJob& job) {
           wgpu::Status presentStatus;
           {
             std::lock_guard submitLock(g_queueSubmitMutex);
+#ifdef __EMSCRIPTEN__
+            // The browser presents the canvas when the page yields (end_frame).
+            presentStatus = wgpu::Status::Success;
+#else
             presentStatus = g_surface.Present();
+#endif
           }
           presentDuration = std::chrono::duration_cast<std::chrono::nanoseconds>(
               PresentClock::now() - presentStarted);
@@ -1911,6 +1919,11 @@ void end_frame() {
 #endif
   if (!frame_worker_requested()) {
     end_frame_impl(true, true);
+#ifdef __EMSCRIPTEN__
+    // The browser shows a canvas frame only when the page's thread returns to its
+    // event loop; Asyncify unwinds the game here and resumes it on the next task.
+    emscripten_sleep(0);
+#endif
     return;
   }
 

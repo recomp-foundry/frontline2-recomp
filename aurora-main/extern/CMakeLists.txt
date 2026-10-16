@@ -261,6 +261,12 @@ if (AURORA_ENABLE_GX)
       ${imgui_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp
     )
     target_compile_definitions(imgui_backends PRIVATE IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
+    if (EMSCRIPTEN)
+      # emdawnwebgpu is Dawn's API; imgui's own Emscripten path targets the retired
+      # USE_WEBGPU headers, so its WebGPU backend is compiled as for Dawn.
+      set_source_files_properties(${imgui_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp
+        PROPERTIES COMPILE_OPTIONS "-U__EMSCRIPTEN__")
+    endif ()
     target_link_libraries(imgui_backends PRIVATE imgui ${AURORA_SDL3_TARGET} dawn::webgpu_dawn)
     target_link_libraries(imgui PUBLIC imgui_backends)
 

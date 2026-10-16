@@ -1,0 +1,32 @@
+diff -ruN a/runtime/src/main.cpp b/runtime/src/main.cpp
+--- a/runtime/src/main.cpp	2026-10-16 02:20:30
++++ b/runtime/src/main.cpp	2026-10-16 02:20:30
+@@ -317,6 +317,13 @@
+ #endif
+ 
+ bool InstallTranscriptPipe(int& outReadFd, int& outWriteFd, int targetFd) {
++#if defined(__EMSCRIPTEN__)
++    // The web build leaves stdout/stderr on the page's console.
++    (void)outReadFd;
++    (void)outWriteFd;
++    (void)targetFd;
++    return false;
++#endif
+ #if defined(_WIN32)
+     int pipeFds[2]{-1, -1};
+     if (_pipe(pipeFds, 8192, _O_BINARY) != 0) {
+@@ -1529,7 +1536,14 @@
+     }
+ }
+ 
++#ifdef __EMSCRIPTEN__
++void SetUpWebFiles(); // web/web_files.cpp: mounts the disc and writes the configuration
++#endif
++
+ int main(int argc, char** argv) {
++#ifdef __EMSCRIPTEN__
++    SetUpWebFiles();
++#endif
+     return RuntimeMain(argc, argv);
+ }
+ extern "C" bool g_dynamicAspectRatioEnabled = false;

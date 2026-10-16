@@ -500,7 +500,14 @@ static bool create_surface() {
     Log.error("Failed to create surface: no window");
     return false;
   }
+#ifdef __EMSCRIPTEN__
+  // The browser: the page's canvas (SDL's emscripten window uses "#canvas").
+  auto canvasDescriptor = std::make_unique<wgpu::EmscriptenSurfaceSourceCanvasHTMLSelector>();
+  canvasDescriptor->selector = "#canvas";
+  std::unique_ptr<wgpu::ChainedStruct> chainedDescriptor = std::move(canvasDescriptor);
+#else
   const auto chainedDescriptor = utils::SetupWindowAndGetSurfaceDescriptor(window);
+#endif
   if (!chainedDescriptor) {
     Log.error("Failed to create surface descriptor for current window");
     return false;
@@ -644,12 +651,14 @@ bool initialize(AuroraBackend auroraBackend) {
     std::vector<wgpu::FeatureName> requiredFeatures;
     // Optional native sharing for MetalFX. Devices without either feature keep
     // the normal renderer; the upscaler checks the enabled pair at runtime.
+#ifdef WEBGPU_DAWN
     if (backend == wgpu::BackendType::Metal &&
         g_adapter.HasFeature(wgpu::FeatureName::SharedTextureMemoryIOSurface) &&
         g_adapter.HasFeature(wgpu::FeatureName::SharedFenceMTLSharedEvent)) {
       requiredFeatures.push_back(wgpu::FeatureName::SharedTextureMemoryIOSurface);
       requiredFeatures.push_back(wgpu::FeatureName::SharedFenceMTLSharedEvent);
     }
+#endif
     bool implicitDeviceSynchronizationSupported = false;
     wgpu::SupportedFeatures supportedFeatures;
     g_adapter.GetFeatures(&supportedFeatures);
@@ -661,10 +670,14 @@ bool initialize(AuroraBackend auroraBackend) {
       }
       // The presenter calls device and queue methods while the frame worker encodes, which Dawn only
       // supports with this feature; without it the two race inside the device's dynamic uploader.
+#ifdef WEBGPU_DAWN
       if (feature == wgpu::FeatureName::ImplicitDeviceSynchronization) {
         implicitDeviceSynchronizationSupported = true;
         requiredFeatures.push_back(feature);
       }
+#else
+      implicitDeviceSynchronizationSupported = true;  // the browser: one thread uses the device
+#endif
     }
     if (!implicitDeviceSynchronizationSupported) {
       Log.warn(
@@ -764,6 +777,7 @@ bool initialize(AuroraBackend auroraBackend) {
     if (!g_device) {
       return false;
     }
+#ifdef WEBGPU_DAWN
     g_device.SetLoggingCallback([](wgpu::LoggingType type, wgpu::StringView message) {
       AuroraLogLevel level = LOG_FATAL;
       switch (type) {
@@ -784,6 +798,7 @@ bool initialize(AuroraBackend auroraBackend) {
       }
       Log.report(level, "WebGPU message: {}", message);
     });
+#endif
   }
   g_queue = g_device.GetQueue();
 

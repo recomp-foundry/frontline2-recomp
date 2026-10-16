@@ -6,7 +6,9 @@
 
 set(DATA_INIT_FILE "${MKW_RUNTIME_SOURCE_DIR}/../generated/data_sections_init.cpp")
 set(DATA_INIT_BLOB_ASM "${MKW_RUNTIME_SOURCE_DIR}/../generated/data_sections_init_blobs.S")
-if(EXISTS "${DATA_INIT_FILE}")
+# The web build reads the DOL sections from the user's disc at boot
+# (runtime/web/dol_sections_web.cpp) instead of embedding them.
+if(EXISTS "${DATA_INIT_FILE}" AND NOT MKW_PLATFORM_WEB)
     list(APPEND SOURCES "${DATA_INIT_FILE}")
 endif()
 # Crash-report symbolization table emitted by generate-data-init. The stub
@@ -18,7 +20,7 @@ if(EXISTS "${GUEST_SYMBOL_TABLE_FILE}")
 else()
     list(APPEND SOURCES "${MKW_RUNTIME_SOURCE_DIR}/cmake/guest_symbol_table_stub.cpp")
 endif()
-if(EXISTS "${DATA_INIT_BLOB_ASM}")
+if(EXISTS "${DATA_INIT_BLOB_ASM}" AND NOT MKW_PLATFORM_WEB)
     enable_language(ASM)
     set_source_files_properties("${DATA_INIT_BLOB_ASM}" PROPERTIES LANGUAGE ASM SKIP_UNITY_BUILD_INCLUSION ON)
     list(APPEND SOURCES "${DATA_INIT_BLOB_ASM}")
@@ -83,6 +85,10 @@ target_compile_definitions(mkw_runtime_common PRIVATE
 target_link_libraries(mkw_runtime_common PRIVATE
     aurora::gx aurora::pad aurora::si aurora::vi aurora::mtx)
 target_link_libraries(mkw_runtime_common PRIVATE mkw_platform mkw::pugixml mkw::toml11 mkw::cryptopp mkw::mbedtls)
+if(MKW_PLATFORM_WEB)
+    # hle/bw2/dll_modules.cpp inflates the gzipped RSO; native hosts use the system zlib.
+    target_link_libraries(mkw_runtime_common PRIVATE ZLIB::ZLIB)
+endif()
 if(MKW_PLATFORM_WINDOWS)
     target_link_libraries(mkw_runtime_common PRIVATE shell32 windowsapp)
 elseif(MKW_PLATFORM_LINUX OR MKW_PLATFORM_MACOS_X86_64)
@@ -215,6 +221,32 @@ function(mkw_configure_product target)
         target_link_options(${target} PRIVATE
             "LINKER:-U,_OBJC_CLASS_$_MTLLogStateDescriptor")
     endif()
+    if(MKW_PLATFORM_WEB)
+        # The web build (runtime/web/): one module on the page's main thread, the
+        # guest fibers on Asyncify, auxiliary threads as pthreads, files in WasmFS.
+        set_target_properties(${target} PROPERTIES SUFFIX ".js")
+        target_link_options(${target} PRIVATE
+            -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=1048576
+            -sINITIAL_MEMORY=1GB -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=8GB
+            -sSTACK_SIZE=8MB -sDEFAULT_PTHREAD_STACK_SIZE=2MB -sPTHREAD_POOL_SIZE=8
+            -sWASMFS=1 -sFORCE_FILESYSTEM=1
+            -sENVIRONMENT=web,worker -sEXIT_RUNTIME=0
+            -sEXPORTED_RUNTIME_METHODS=ENV
+            "SHELL:--js-library ${MKW_RUNTIME_SOURCE_DIR}/web/frontline_web.js"
+            "SHELL:--pre-js ${MKW_RUNTIME_SOURCE_DIR}/web/frontline_disc.js"
+            "-sASYNCIFY_IMPORTS=['_wasmfs_jsimpl_read']"
+            --profiling-funcs
+            "SHELL:--preload-file ${MKW_RUNTIME_SOURCE_DIR}/assets/wii@/app/wii_bootstrap"
+            "SHELL:--preload-file ${MKW_RUNTIME_SOURCE_DIR}/assets/dsp/dsp_coef.bin@/app/dsp_coef.bin"
+            "SHELL:--preload-file ${MKW_RUNTIME_SOURCE_DIR}/assets/pipeline/initial_pipeline_cache.db@/app/initial_pipeline_cache.db"
+            "SHELL:--preload-file ${MKW_RUNTIME_SOURCE_DIR}/assets/certs/cacert.pem@/app/cacert.pem")
+        add_custom_command(TARGET ${target} POST_BUILD COMMAND python3
+            "${MKW_RUNTIME_SOURCE_DIR}/web/fix_wasm64_glue.py" "$<TARGET_FILE:${target}>")
+        foreach(file index.html serve-web.py)
+            add_custom_command(TARGET ${target} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${MKW_RUNTIME_SOURCE_DIR}/web/${file}" "$<TARGET_FILE_DIR:${target}>/${file}")
+        endforeach()
+    endif()
     if(EXISTS "${MKW_AURORA_DIR}/cmake/AuroraCopyRuntimeDLLs.cmake")
         include("${MKW_AURORA_DIR}/cmake/AuroraCopyRuntimeDLLs.cmake")
         aurora_copy_runtime_dlls(${target})
@@ -345,6 +377,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64)$")
     set(MKW_BASELINE_ARCH_FLAG -march=x86-64-${MKW_X86_CPU_PROFILE})
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
     set(MKW_BASELINE_ARCH_FLAG -mcpu=native)
+elseif(MKW_PLATFORM_WEB)
+    # WebAssembly SIMD with Emscripten's SSE intrinsic headers: the runtime's
+    # ISA helpers take their x86 paths (runtime/include/isa/ppc_isa_config.h).
+    set(MKW_BASELINE_ARCH_FLAG -msimd128 -msse4.1)
 else()
     set(MKW_BASELINE_ARCH_FLAG "")
 endif()

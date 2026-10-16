@@ -331,10 +331,54 @@ Region* TryResolveRegion(uint32_t address, size_t length) {
     return nullptr;
 }
 
+#if defined(__EMSCRIPTEN__)
+// The native backends reserve the whole 4 GiB guest space as zeroed memory, so a
+// guest touch outside every region reads zeros and keeps its writes. The web build
+// has no such reservation (web/guest_flat_memory_web.cpp); it commits the touched
+// 64 KiB blocks on demand instead, and reports them as the native builds do.
+Region* CommitUnmappedBlocks(uint32_t address, size_t length) {
+    constexpr uint64_t kBlock = 0x10000;
+    const uint64_t first = address & ~(kBlock - 1);
+    const uint64_t end = (static_cast<uint64_t>(address) + length + kBlock - 1) & ~(kBlock - 1);
+    if (end > 0x100000000ull) {
+        return nullptr;
+    }
+    for (const auto& region : Regions()) {
+        const uint64_t base = region.config.baseAddress;
+        if (base < end && first < base + region.storageSize) {
+            return nullptr;  // straddles a mapped region: a genuine error
+        }
+    }
+    auto* storage = static_cast<uint8_t*>(std::calloc(1, static_cast<size_t>(end - first)));
+    if (!storage) {
+        return nullptr;
+    }
+    Region region;
+    region.config.name = "UNMAPPED_ON_DEMAND";
+    region.config.baseAddress = static_cast<uint32_t>(first);
+    region.config.sizeBytes = static_cast<size_t>(end - first);
+    region.storagePtr = storage;
+    region.storageSize = static_cast<size_t>(end - first);
+    for (uint64_t page = first >> MemoryInline::kPageShift; page < (end >> MemoryInline::kPageShift); ++page) {
+        MemoryInline::g_pageTable[page].base = storage + ((page << MemoryInline::kPageShift) - first);
+        MemoryInline::g_pageTable[page].limit = MemoryInline::kPageSize;
+    }
+    std::cerr << "[memory] guest touched unmapped 0x" << std::hex << address << std::dec
+              << "; committed " << ((end - first) >> 10) << " KiB of zeroes there" << std::endl;
+    Regions().push_back(std::move(region));
+    return &Regions().back();
+}
+#endif
+
 Region& ResolveRegion(uint32_t address, size_t length) {
     if (Region* region = TryResolveRegion(address, length)) {
         return *region;
     }
+#if defined(__EMSCRIPTEN__)
+    if (Region* region = CommitUnmappedBlocks(address, length)) {
+        return *region;
+    }
+#endif
     // Emit extra context to help diagnose early-boot accesses that miss the map.
     if (auto* cpu = TryGetCpuContext()) {
         const uint32_t active = RecompMod::CurrentTranslatedExecutionAddress();

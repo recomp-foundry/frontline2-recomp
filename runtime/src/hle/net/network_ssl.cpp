@@ -1,3 +1,4 @@
+#include <sys/time.h>
 #include "network_internal.h"
 #include "runtime_config.h"
 #include "runtime_log.h"

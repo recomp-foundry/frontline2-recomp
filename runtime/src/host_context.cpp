@@ -14,6 +14,10 @@
 
 extern "C" void mkw_co_switch(void** targetSp, void** sourceSp);
 extern "C" void* mkw_co_init(void* stackTop, void (*entry)(void*), void* argument);
+#elif defined(__EMSCRIPTEN__)
+#include <emscripten/fiber.h>
+
+#include <cstdlib>
 #elif defined(__linux__) || (defined(__APPLE__) && defined(__x86_64__))
 #include <libco.h>
 
@@ -155,6 +159,108 @@ void Switch(Handle target)
 
     g_current = destination;
     mkw_co_switch(&destination->savedStackPointer, &source->savedStackPointer);
+    g_current = source;
+}
+
+#elif defined(__EMSCRIPTEN__)
+
+// The web build: Emscripten fibers (Asyncify). A switch unwinds the current
+// WebAssembly stack into the fiber's Asyncify buffer and rewinds the target's;
+// the buffer must hold every frame live at a switch (deep translated call chains).
+namespace {
+constexpr std::size_t kAsyncifyStackSize = 8u << 20;
+
+struct Context {
+    emscripten_fiber_t fiber{};
+    void* cStack = nullptr;
+    void* asyncifyStack = nullptr;
+    Entry entry = nullptr;
+    void* argument = nullptr;
+};
+
+Context* g_current = nullptr;
+
+void ContextEntry(void* argument)
+{
+    auto* context = static_cast<Context*>(argument);
+    g_current = context;
+    context->entry(context->argument);
+    // Guest fibers leave through FiberProc's scheduler handoff, never by returning.
+    std::abort();
+}
+} // namespace
+
+bool InitializeScheduler(Handle* scheduler)
+{
+    auto* context = new Context();
+    context->asyncifyStack = std::malloc(kAsyncifyStackSize);
+    if (!context->asyncifyStack) {
+        delete context;
+        return false;
+    }
+    emscripten_fiber_init_from_current_context(&context->fiber, context->asyncifyStack, kAsyncifyStackSize);
+    g_current = context;
+    *scheduler = context;
+    return true;
+}
+
+void ShutdownScheduler(Handle scheduler)
+{
+    auto* context = static_cast<Context*>(scheduler);
+    if (!context) {
+        return;
+    }
+    if (g_current == context) {
+        g_current = nullptr;
+    }
+    std::free(context->asyncifyStack);
+    delete context;
+}
+
+Handle Create(std::size_t stackSize, Entry entry, void* argument)
+{
+    auto* context = new Context();
+    context->entry = entry;
+    context->argument = argument;
+    context->cStack = std::aligned_alloc(16, (stackSize + 15) & ~std::size_t{15});
+    context->asyncifyStack = std::malloc(kAsyncifyStackSize);
+    if (!context->cStack || !context->asyncifyStack) {
+        std::free(context->cStack);
+        std::free(context->asyncifyStack);
+        delete context;
+        return nullptr;
+    }
+    emscripten_fiber_init(&context->fiber, ContextEntry, context, context->cStack, stackSize,
+                          context->asyncifyStack, kAsyncifyStackSize);
+    return context;
+}
+
+void Destroy(Handle context)
+{
+    auto* nativeContext = static_cast<Context*>(context);
+    if (!nativeContext || nativeContext == g_current) {
+        return;
+    }
+    std::free(nativeContext->cStack);
+    std::free(nativeContext->asyncifyStack);
+    delete nativeContext;
+}
+
+bool IsCurrent(Handle context)
+{
+    return context != nullptr && context == g_current;
+}
+
+void Switch(Handle target)
+{
+    auto* destination = static_cast<Context*>(target);
+    Context* source = g_current;
+    if (!destination || destination == source) {
+        return;
+    }
+
+    g_current = destination;
+    emscripten_fiber_swap(&source->fiber, &destination->fiber);
     g_current = source;
 }
 

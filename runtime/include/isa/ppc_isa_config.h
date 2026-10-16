@@ -4,7 +4,12 @@
 #include <cstdint>
 
 #define MKW_RESTRICT __restrict
-#if defined(__x86_64__)
+// x86-64, or WebAssembly with Emscripten's SSE intrinsic headers (-msimd128 -msse4.1),
+// which take the same paths; the web build has no FP control register (ppc_isa_fpenv.h).
+#if defined(__x86_64__) || defined(__EMSCRIPTEN__)
+#define MKW_HOST_SSE 1
+#endif
+#if defined(MKW_HOST_SSE)
 #include <immintrin.h>
 #elif defined(__aarch64__)
 #include <arm_neon.h>

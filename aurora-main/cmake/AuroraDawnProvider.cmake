@@ -39,6 +39,24 @@ function(_aurora_dawn_set_platform_backends)
   endif ()
 endfunction()
 
+# ── Emscripten: the browser's WebGPU through Emscripten's emdawnwebgpu port ──
+# (Dawn's webgpu.h/webgpu_cpp.h over the WebGPU JS API; no Dawn native).
+if (EMSCRIPTEN)
+  if (NOT TARGET dawn::webgpu_dawn)
+    add_library(aurora_emdawnwebgpu INTERFACE)
+    target_compile_options(aurora_emdawnwebgpu INTERFACE --use-port=emdawnwebgpu)
+    target_link_options(aurora_emdawnwebgpu INTERFACE --use-port=emdawnwebgpu)
+    add_library(dawn::webgpu_dawn ALIAS aurora_emdawnwebgpu)
+    add_library(dawn::dawncpp_headers ALIAS aurora_emdawnwebgpu)
+  endif ()
+  foreach (_backend D3D12 D3D11 VULKAN METAL DESKTOP_GL OPENGLES NULL)
+    set(DAWN_ENABLE_${_backend} OFF CACHE INTERNAL "")
+  endforeach ()
+  set(AURORA_DAWN_IS_SHARED FALSE)
+  message(STATUS "aurora: Using emdawnwebgpu (Emscripten)")
+  return()
+endif ()
+
 # ── Auto: resolve provider based on platform availability ──
 set(_aurora_dawn_provider "${AURORA_DAWN_PROVIDER}")
 if (_aurora_dawn_provider STREQUAL "auto")

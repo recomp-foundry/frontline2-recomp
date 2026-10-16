@@ -49,7 +49,25 @@ SDK_NS = r"OS|DVD|GX|VI|AI|AX|DSP|SC|NAND|PAD|SI|EXI|IPC|WPAD|KPAD|PPC|DC|IC|LC|
 LABEL = re.compile(r"_(caseD|case|switch|default|loop|label)_?|_[0-9A-Fa-f]{8}$|\+0x")
 
 
+# projects/bw2/remap/patches/*.patch: unified diffs (patch -p1) against the upstream text, applied
+# in name order before source_edits.csv. They carry the port's platform work (the web build),
+# which is too large for exact-string edits; they must not contain guest addresses.
+PATCHES = sorted((ROOT / "projects/bw2/remap/patches").glob("*.patch"))
+PATCHED = OUT / "patched-upstream"
+if PATCHES:
+    import shutil
+    shutil.rmtree(PATCHED, ignore_errors=True)
+    PATCHED.mkdir(parents=True)
+    archive = subprocess.run(["git", "-C", str(ROOT), "archive", UPSTREAM_COMMIT, "runtime"],
+                             check=True, capture_output=True).stdout
+    subprocess.run(["tar", "-x", "-C", str(PATCHED)], input=archive, check=True)
+    for patch in PATCHES:
+        subprocess.run(["patch", "-s", "-p1", "-d", str(PATCHED), "-i", str(patch)], check=True)
+
+
 def git_show(path):
+    if PATCHES and (PATCHED / path).exists():
+        return (PATCHED / path).read_text(encoding="utf-8")
     return subprocess.run(["git", "-C", str(ROOT), "show", f"{UPSTREAM_COMMIT}:{path}"],
                           check=True, capture_output=True).stdout.decode("utf-8")
 
@@ -264,7 +282,10 @@ for path in git_ls(RUNTIME_DIRS):
             edits.append((m.start("addr"), m.end("addr"), f"{new:08X}"))
         elif new is None and how != "manual disable":
             unresolved.append(rows[-1])
-    if edits or protected:
+    patched = bool(PATCHES) and (PATCHED / path).exists() and \
+        (PATCHED / path).read_bytes() != subprocess.run(["git", "-C", str(ROOT), "show", f"{UPSTREAM_COMMIT}:{path}"],
+                                                       check=True, capture_output=True).stdout
+    if edits or protected or patched:
         out, last = [], 0
         for s, e, rep in sorted(edits, key=lambda x: (x[0], -x[1])):
             if s < last:

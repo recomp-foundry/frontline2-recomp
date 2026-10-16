@@ -1,0 +1,35 @@
+diff -ruN a/runtime/include/memory_access.h b/runtime/include/memory_access.h
+--- a/runtime/include/memory_access.h	2026-10-16 02:53:48
++++ b/runtime/include/memory_access.h	2026-10-16 02:53:48
+@@ -539,15 +539,31 @@
+ 
+ template <typename T>
+ MKW_MEMORY_FORCE_INLINE T FlatLoad(uint32_t address) {
++#if defined(__EMSCRIPTEN__)
++    // The web build has no flat view (GuestFlat::RequiresCheckedAccess() is always
++    // true); this also covers the check-free FlatWriteRam*/stack paths below.
++    if constexpr (sizeof(T) == 1) return static_cast<T>(Memory::Read8(address));
++    else if constexpr (sizeof(T) == 2) return static_cast<T>(Memory::Read16(address));
++    else if constexpr (sizeof(T) == 4) return static_cast<T>(Memory::Read32(address));
++    else return static_cast<T>(Memory::Read64(address));
++#else
+     T value{};
+     std::memcpy(&value, MKW_FLAT_GUEST_BASE + address, sizeof(T));
+     return MaybeByteSwap(value);
++#endif
+ }
+ 
+ template <typename T>
+ MKW_MEMORY_FORCE_INLINE void FlatStore(uint32_t address, T value) {
++#if defined(__EMSCRIPTEN__)
++    if constexpr (sizeof(T) == 1) Memory::Write8(address, static_cast<uint8_t>(value));
++    else if constexpr (sizeof(T) == 2) Memory::Write16(address, static_cast<uint16_t>(value));
++    else if constexpr (sizeof(T) == 4) Memory::Write32(address, static_cast<uint32_t>(value));
++    else Memory::Write64(address, static_cast<uint64_t>(value));
++#else
+     const T swapped = MaybeByteSwap(value);
+     std::memcpy(MKW_FLAT_GUEST_BASE + address, &swapped, sizeof(T));
++#endif
+ }
+ 
+ MKW_MEMORY_FORCE_INLINE uint8_t FlatRead8(uint32_t address) {

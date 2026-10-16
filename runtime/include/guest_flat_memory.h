@@ -36,6 +36,10 @@ inline constexpr uintptr_t kFixedFlatGuestBase = 0x0000'0080'0000'0000ull;
 // probing to sit far below where the PIE image, heap, shared libraries and
 // stack actually land (all clustered above ~340 GiB on a 39-bit/512 GiB system).
 inline constexpr uintptr_t kFixedFlatGuestBase = 0x0000'0010'0000'0000ull;
+#elif defined(__EMSCRIPTEN__)
+// The web build has no flat view (web/guest_flat_memory_web.cpp): every access is
+// checked, so this base is never dereferenced.
+inline constexpr uintptr_t kFixedFlatGuestBase = 0;
 #else
 #error "guest_flat_memory.h has no fixed flat guest base chosen for this architecture"
 #endif
@@ -73,11 +77,13 @@ bool IsActive();
 // fold this to a compile-time false: it appears in every flat access and must
 // not become a hot-path load. Only AArch64, where the page size is a kernel
 // configuration (4/16/64 KiB), has to probe it at runtime.
-#if defined(_WIN32) || defined(__x86_64__)
+#if defined(_WIN32) || defined(__x86_64__) || defined(__EMSCRIPTEN__)
 #define MKW_GUEST_FLAT_FIXED_PAGE_SIZE 1
 #endif
 
-#if defined(MKW_GUEST_FLAT_FIXED_PAGE_SIZE)
+#if defined(__EMSCRIPTEN__)
+inline constexpr bool RequiresCheckedAccess() noexcept { return true; }
+#elif defined(MKW_GUEST_FLAT_FIXED_PAGE_SIZE)
 inline constexpr bool RequiresCheckedAccess() noexcept { return false; }
 #else
 extern bool g_requiresCheckedAccess;

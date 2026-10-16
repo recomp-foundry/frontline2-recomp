@@ -6,10 +6,11 @@ set -euo pipefail
 cd "$(dirname "$0")/../../.."
 T=translator/src/Translator.Cli/bin/Release/net8.0/Translator.Cli.dll
 L=build-macos
-# Only files the remap tool rewrites (those imported from upstream) are reset;
+# Only files the remap tool rewrites (runtime/src and runtime/include as imported from
+# upstream) are reset;
 # the port's own runtime files (runtime/src/hle/bw2/, bw2_hle.h) keep their edits.
 UPSTREAM=05e82a3
-git diff --name-only -- runtime | while read -r f; do
+git diff --name-only -- runtime/src runtime/include | while read -r f; do
     if git cat-file -e "$UPSTREAM:$f" 2>/dev/null; then git checkout -q -- "$f"; fi
 done
 python3 -I projects/bw2/tools/remap_runtime.py > "$L/iterate-remap.log"

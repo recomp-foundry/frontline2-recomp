@@ -317,6 +317,13 @@ void CloseFileDescriptor(int fd) {
 #endif
 
 bool InstallTranscriptPipe(int& outReadFd, int& outWriteFd, int targetFd) {
+#if defined(__EMSCRIPTEN__)
+    // The web build leaves stdout/stderr on the page's console.
+    (void)outReadFd;
+    (void)outWriteFd;
+    (void)targetFd;
+    return false;
+#endif
 #if defined(_WIN32)
     int pipeFds[2]{-1, -1};
     if (_pipe(pipeFds, 8192, _O_BINARY) != 0) {
@@ -1392,7 +1399,11 @@ int RuntimeMain(int argc, char** argv) {
             const char* configName;
             AuroraBackend backend;
         };
-#if defined(__APPLE__)
+#if defined(__EMSCRIPTEN__)
+        static constexpr std::array<GraphicsBackendEntry, 2> kGraphicsBackends{{
+            {"auto", BACKEND_AUTO}, {"webgpu", BACKEND_WEBGPU},
+        }};
+#elif defined(__APPLE__)
         static constexpr std::array<GraphicsBackendEntry, 2> kGraphicsBackends{{
             {"auto", BACKEND_AUTO}, {"metal", BACKEND_METAL},
         }};
@@ -1525,7 +1536,14 @@ int RuntimeMain(int argc, char** argv) {
     }
 }
 
+#ifdef __EMSCRIPTEN__
+void SetUpWebFiles(); // web/web_files.cpp: mounts the disc and writes the configuration
+#endif
+
 int main(int argc, char** argv) {
+#ifdef __EMSCRIPTEN__
+    SetUpWebFiles();
+#endif
     return RuntimeMain(argc, argv);
 }
 extern "C" bool g_dynamicAspectRatioEnabled = false;

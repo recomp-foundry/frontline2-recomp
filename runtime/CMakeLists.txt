@@ -9,6 +9,11 @@ if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
         "Minimum macOS version supported by WiiCompiled" FORCE)
 endif()
 project(mkw_recompiled)
+if(EMSCRIPTEN)
+    # CMake on a macOS host leaves APPLE set for the Emscripten target; nothing
+    # Apple-specific (Objective-C, Metal, frameworks) applies to the web build.
+    set(APPLE FALSE)
+endif()
 
 if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(Clang|AppleClang)$" OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "WiiCompiled requires a 64-bit Clang toolchain")
@@ -37,6 +42,9 @@ elseif(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64|arm
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(AMD64|amd64|x86_64|X86_64|aarch64|arm64|ARM64)$")
     set(MKW_PLATFORM_LINUX TRUE)
+elseif(EMSCRIPTEN)
+    # The web build (cmake/toolchains/web.cmake): wasm64 in the browser.
+    set(MKW_PLATFORM_WEB TRUE)
 else()
     message(FATAL_ERROR
         "WiiCompiled supports 64-bit LLVM-MinGW Clang on Windows, native Linux x86_64/aarch64, or Apple Clang on macOS x86_64/arm64")
@@ -321,7 +329,13 @@ endif()
 # a registration file is silently never compiled and never errors. The stale-glob
 # failure mode is worth far more than the milliseconds.
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS "src/*.cpp")
-if(MKW_PLATFORM_MACOS)
+if(MKW_PLATFORM_WEB)
+    # No mmap views or page protections in WebAssembly: web/guest_flat_memory_web.cpp.
+    list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory.cpp"
+                             "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory_macos.cpp")
+    file(GLOB MKW_WEB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/web/*.cpp")
+    list(APPEND SOURCES ${MKW_WEB_SOURCES})
+elseif(MKW_PLATFORM_MACOS)
     list(REMOVE_ITEM SOURCES "${CMAKE_CURRENT_LIST_DIR}/src/guest_flat_memory.cpp")
     if(MKW_PLATFORM_MACOS_ARM64)
         # HostContext's Apple Silicon backend is implemented in a small assembly
