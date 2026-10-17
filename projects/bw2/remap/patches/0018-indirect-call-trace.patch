@@ -1,0 +1,48 @@
+diff -ruN a/runtime/include/abi_bridge.h b/runtime/include/abi_bridge.h
+--- a/runtime/include/abi_bridge.h	2026-10-17 13:23:38
++++ b/runtime/include/abi_bridge.h	2026-10-17 13:23:38
+@@ -636,16 +636,41 @@
+     std::exit(EXIT_FAILURE);
+ }
+ 
++// BW2_TRACE_INDIRECT=<hex guest address>: log every indirect call to that target
++// (r3/r4 on entry, r3 on return), the first 40 and then one in 500. Diagnostic for
++// callbacks that cannot be wrapped natively (an override removes their translation).
++inline uint32_t Bw2TracedIndirectTarget() {
++    static const uint32_t target = [] {
++        const char* v = std::getenv("BW2_TRACE_INDIRECT");
++        return v != nullptr ? static_cast<uint32_t>(std::strtoul(v, nullptr, 16)) : 0u;
++    }();
++    return target;
++}
++
+ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
+     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
+     if (target == 0) {
+         ReportMissingCpuTarget(target, cpu);
+     }
+     ApplyRuntimeCallOptions(target, cpu);
+-    if (TryDispatchRawCpuTarget(TranslatedFunctionRegistry::FindRawByAddressPtr(target), cpu)) {
+-        return;
++    const bool traced = target != 0 && target == Bw2TracedIndirectTarget();
++    uint32_t tracedR3 = 0, tracedR4 = 0;
++    uint64_t tracedCall = 0;
++    if (traced) {
++        static uint64_t calls = 0;
++        tracedCall = ++calls;
++        tracedR3 = cpu->gpr[3];
++        tracedR4 = cpu->gpr[4];
+     }
+-    if (TryDispatchResolvedCpuTarget(TranslatedFunctionRegistry::FindByAddressPtr(target), cpu)) {
++    bool dispatched = TryDispatchRawCpuTarget(TranslatedFunctionRegistry::FindRawByAddressPtr(target), cpu);
++    if (!dispatched) {
++        dispatched = TryDispatchResolvedCpuTarget(TranslatedFunctionRegistry::FindByAddressPtr(target), cpu);
++    }
++    if (traced && dispatched && (tracedCall <= 40 || (tracedCall % 500) == 0)) {
++        std::fprintf(stderr, "[indirect] 0x%08X #%llu r3=0x%08X r4=0x%08X -> r3=0x%08X\n", target,
++                     static_cast<unsigned long long>(tracedCall), tracedR3, tracedR4, cpu->gpr[3]);
++    }
++    if (dispatched) {
+         return;
+     }
+     ReportMissingCpuTarget(target, cpu);

@@ -1,0 +1,37 @@
+diff -ruN a/runtime/include/abi_bridge.h b/runtime/include/abi_bridge.h
+--- a/runtime/include/abi_bridge.h	2026-10-17 13:33:51
++++ b/runtime/include/abi_bridge.h	2026-10-17 13:33:51
+@@ -656,19 +656,31 @@
+     const bool traced = target != 0 && target == Bw2TracedIndirectTarget();
+     uint32_t tracedR3 = 0, tracedR4 = 0;
+     uint64_t tracedCall = 0;
++    double tracedF1 = 0.0;
+     if (traced) {
+         static uint64_t calls = 0;
+         tracedCall = ++calls;
+         tracedR3 = cpu->gpr[3];
+         tracedR4 = cpu->gpr[4];
++        tracedF1 = cpu->fpr[1].d;
+     }
+     bool dispatched = TryDispatchRawCpuTarget(TranslatedFunctionRegistry::FindRawByAddressPtr(target), cpu);
+     if (!dispatched) {
+         dispatched = TryDispatchResolvedCpuTarget(TranslatedFunctionRegistry::FindByAddressPtr(target), cpu);
+     }
+     if (traced && dispatched && (tracedCall <= 40 || (tracedCall % 500) == 0)) {
+-        std::fprintf(stderr, "[indirect] 0x%08X #%llu r3=0x%08X r4=0x%08X -> r3=0x%08X\n", target,
+-                     static_cast<unsigned long long>(tracedCall), tracedR3, tracedR4, cpu->gpr[3]);
++        // Also the first 32 bytes behind r4 after the call (a context the callee may fill)
++        // and the incoming f1, for callbacks that score objects.
++        uint32_t ctxWords[8] = {};
++        for (uint32_t i = 0; i < 8; ++i) {
++            ctxWords[i] = Memory::Contains(tracedR4 + i * 4u, 4u) ? Memory::Read32(tracedR4 + i * 4u) : 0u;
++        }
++        std::fprintf(stderr,
++                     "[indirect] 0x%08X #%llu r3=0x%08X r4=0x%08X f1=%g -> r3=0x%08X r4[0..7]=%08X %08X %08X %08X "
++                     "%08X %08X %08X %08X\n",
++                     target, static_cast<unsigned long long>(tracedCall), tracedR3, tracedR4, tracedF1, cpu->gpr[3],
++                     ctxWords[0], ctxWords[1], ctxWords[2], ctxWords[3], ctxWords[4], ctxWords[5], ctxWords[6],
++                     ctxWords[7]);
+     }
+     if (dispatched) {
+         return;
