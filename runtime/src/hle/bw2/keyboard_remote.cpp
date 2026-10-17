@@ -109,6 +109,8 @@ struct AutoScript {
     bool active = false;
     float x = 0.0f;
     float y = 0.0f;
+    float stickX = 0.0f;  // "stick=x,y": Nunchuk stick held until the next stick= step
+    float stickY = 0.0f;
     uint32_t hold = 0;
 };
 
@@ -168,6 +170,8 @@ bool RunAutoScript() {
             done = elapsed >= std::atof(arg.c_str());
         } else if (verb == "point") {
             std::sscanf(arg.c_str(), "%f,%f", &s.x, &s.y);
+        } else if (verb == "stick") {
+            std::sscanf(arg.c_str(), "%f,%f", &s.stickX, &s.stickY);
         } else if (verb == "press") {
             const uint32_t buttons = (arg.find('A') != std::string::npos ? kWpadA : 0u) |
                                      (arg.find('B') != std::string::npos ? kWpadB : 0u);
@@ -246,6 +250,8 @@ bool Bw2KeyboardRemoteSample(unsigned int chan, WiiRemoteInput::KpadSample& samp
         g_pointer.x = Script().x + ((++frame & 1) ? 0.01f : -0.01f);
         g_pointer.y = Script().y;
         sample.hold |= Script().hold;
+        sample.stick[0] = Script().stickX;
+        sample.stick[1] = Script().stickY;
         return true;
     }
     if (!g_pointer.valid && std::getenv("BW2_AUTOPRESS") != nullptr) {
