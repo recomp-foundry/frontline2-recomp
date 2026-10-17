@@ -666,14 +666,16 @@ inline bool Bw2IsTracedIndirectTarget(uint32_t target) {
     return false;
 }
 
-// A chain starting with "r3" follows the offsets from r3 instead of r4.
-inline std::string Bw2TracedIndirectDerefs(uint32_t r3, uint32_t r4) {
+// A chain starting with "r3" follows the offsets from r3 instead of r4; "ret" from the r3
+// the call returned.
+inline std::string Bw2TracedIndirectDerefs(uint32_t r3, uint32_t r4, uint32_t ret) {
     static const std::vector<std::vector<uint32_t>> chains = [] {
         std::vector<std::vector<uint32_t>> out;
         if (const char* v = std::getenv("BW2_TRACE_INDIRECT_DEREF")) {
             std::vector<uint32_t> chain;
             for (const char* p = v; ; ++p) {
                 if (*p == 'r' && p[1] == '3') { chain.push_back(0xFFFFFFFFu); p += 1; continue; }
+                if (*p == 'r' && p[1] == 'e' && p[2] == 't') { chain.push_back(0xFFFFFFFEu); p += 2; continue; }
                 if (*p == ':' || *p == ',' || *p == 0) {
                     if (*p == ',' || *p == 0) {
                         if (!chain.empty()) out.push_back(chain);
@@ -696,6 +698,7 @@ inline std::string Bw2TracedIndirectDerefs(uint32_t r3, uint32_t r4) {
         bool ok = true;
         for (uint32_t off : chain) {
             if (off == 0xFFFFFFFFu) { addr = r3; continue; }
+            if (off == 0xFFFFFFFEu) { addr = ret; continue; }
             const uint32_t at = addr + off;
             if (!Memory::Contains(at, 4u)) { ok = false; break; }
             addr = Memory::Read32(at);
@@ -750,7 +753,7 @@ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
                      "%08X %08X %08X %08X%s\n",
                      target, static_cast<unsigned long long>(tracedCall), tracedR3, tracedR4, tracedF1, cpu->gpr[3],
                      cpu->fpr[1].d, ctxWords[0], ctxWords[1], ctxWords[2], ctxWords[3], ctxWords[4], ctxWords[5],
-                     ctxWords[6], ctxWords[7], Bw2TracedIndirectDerefs(tracedR3, tracedR4).c_str());
+                     ctxWords[6], ctxWords[7], Bw2TracedIndirectDerefs(tracedR3, tracedR4, cpu->gpr[3]).c_str());
     }
     if (dispatched) {
         return;
