@@ -550,6 +550,7 @@ struct Bw2TraceCallState {
     uint32_t target = 0;
     uint64_t call = 0;
     uint32_t r3 = 0, r4 = 0, r5 = 0;
+    uint32_t lr = 0;
     double f1 = 0.0;
 };
 inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cpu);
@@ -754,6 +755,7 @@ inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cp
     st.r3 = cpu->gpr[3];
     st.r4 = cpu->gpr[4];
     st.r5 = cpu->gpr[5];
+    st.lr = cpu->lr;
     st.f1 = cpu->fpr[1].d;
     return st;
 }
@@ -775,9 +777,9 @@ inline void Bw2TraceCallEnd(const Bw2TraceCallState& st, const CpuContext* cpu) 
         ctxWords[i] = Memory::Contains(st.r4 + i * 4u, 4u) ? Memory::Read32(st.r4 + i * 4u) : 0u;
     }
     std::fprintf(stderr,
-                 "[indirect] 0x%08X #%llu r3=0x%08X r4=0x%08X r5=0x%08X f1=%g -> r3=0x%08X f1=%g r4[0..7]=%08X %08X "
+                 "[indirect] 0x%08X #%llu LR=0x%08X r3=0x%08X r4=0x%08X r5=0x%08X f1=%g -> r3=0x%08X f1=%g r4[0..7]=%08X %08X "
                  "%08X %08X %08X %08X %08X %08X%s\n",
-                 st.target, static_cast<unsigned long long>(st.call), st.r3, st.r4, st.r5, st.f1, cpu->gpr[3],
+                 st.target, static_cast<unsigned long long>(st.call), st.lr, st.r3, st.r4, st.r5, st.f1, cpu->gpr[3],
                  cpu->fpr[1].d, ctxWords[0], ctxWords[1], ctxWords[2], ctxWords[3], ctxWords[4], ctxWords[5],
                  ctxWords[6], ctxWords[7], Bw2TracedIndirectDerefs(st.r3, st.r4, st.r5, cpu->gpr[3]).c_str());
 }
