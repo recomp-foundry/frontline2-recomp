@@ -110,10 +110,10 @@ public sealed partial class CxxLinearCodeGenerator
                                        store.Source.RegisterName != null &&
                                        IsFloatRegister(store.Source.RegisterName);
                     if (isFloatStore &&
-                        store.SizeBytes == 4 &&
                         store.Source.RegisterName != null &&
                         localPaired.TryGetValue(GetRegisterBaseName(store.Source.RegisterName), out var sourceIsPaired) &&
-                        sourceIsPaired)
+                        sourceIsPaired &&
+                        PairedStoreNeedsScalar(store.SizeBytes, store.Source.RegisterName, store.Address, stackFacts))
                     {
                         srcExpr = $"PPC_PsToScalarInline({srcExpr})";
                     }
@@ -185,8 +185,9 @@ public sealed partial class CxxLinearCodeGenerator
                     var srcExpr = ToExpression(store.Source, types);
                     var isFloatStore = store.Source.Kind == "register" && store.Source.RegisterName is not null &&
                                        IsFloatRegister(store.Source.RegisterName);
-                    if (isFloatStore && store.SizeBytes == 4 && store.Source.RegisterName is not null &&
-                        localPaired.TryGetValue(GetRegisterBaseName(store.Source.RegisterName), out var sourceIsPaired) && sourceIsPaired)
+                    if (isFloatStore && store.Source.RegisterName is not null &&
+                        localPaired.TryGetValue(GetRegisterBaseName(store.Source.RegisterName), out var sourceIsPaired) && sourceIsPaired &&
+                        PairedStoreNeedsScalar(store.SizeBytes, store.Source.RegisterName, store.OriginalAddress, stackFacts))
                         srcExpr = $"PPC_PsToScalarInline({srcExpr})";
                     var address = RemapAddress(store.OriginalAddress, types, localConstants, linkedAddressRemap);
                     var helper = isFloatStore ? $"Float{Bits(store.SizeBytes)}" : Bits(store.SizeBytes).ToString();
@@ -275,8 +276,9 @@ public sealed partial class CxxLinearCodeGenerator
                     string Source(IrValue source)
                     {
                         var expression = ToExpression(source, types);
-                        if (pair.ElementSizeBytes == 4 && source.RegisterName is { } name && IsFloatRegister(name) &&
-                            localPaired.TryGetValue(GetRegisterBaseName(name), out var paired) && paired)
+                        if (source.RegisterName is { } name && IsFloatRegister(name) &&
+                            localPaired.TryGetValue(GetRegisterBaseName(name), out var paired) && paired &&
+                            PairedStoreNeedsScalar(pair.ElementSizeBytes, name, null, stackFacts))
                             expression = $"PPC_PsToScalarInline({expression})";
                         return expression;
                     }

@@ -175,6 +175,29 @@ public sealed partial class CxxLinearCodeGenerator
     }
 
     /// <summary>
+    /// Whether a store of an FPR that currently holds a packed pair has to write ps0 as a
+    /// double. That is what stfs and stfd do on the hardware, so a paired value handed to
+    /// scalar code through memory (a psq_l result pushed as a Lua number, say) arrives as
+    /// the number it is. The one exception is the prologue spill of a nonvolatile FPR to
+    /// its stack slot: the matching lfd reloads the same 8 bytes, and keeping them packed
+    /// is how both lanes survive the call (see the psq save/restore slots in StackAnalysis).
+    /// </summary>
+    private static bool PairedStoreNeedsScalar(
+        int sizeBytes,
+        string? register,
+        IrAddress? address,
+        StackAddressFacts? stackFacts)
+    {
+        if (sizeBytes == 4)
+            return true;
+        if (sizeBytes != 8)
+            return false;
+        var nonvolatileStackSpill = TryParseNonvolatileFpr(register, out _) &&
+                                    (address is null || (stackFacts is not null && stackFacts.TryResolve(address, out _)));
+        return !nonvolatileStackSpill;
+    }
+
+    /// <summary>
     /// Materializes a packed pair when a paired-single consumer reads a scalar FPR.
     /// </summary>
     private static string ToPairedFloatExpression(
