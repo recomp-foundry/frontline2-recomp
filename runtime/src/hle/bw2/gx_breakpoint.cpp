@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <vector>
 #include "abi_bridge.h"
 #include "fiber_manager.h"
 #include "guest_interrupt_context.h"
@@ -102,6 +103,34 @@ void CaptureRenderedFrame() {
     aurora_request_frame_capture(frame, path);
     std::fprintf(stderr, "[capture] frame=%u %s\n", frame, path);
 }
+// BW2_WATCH=ADDR[,ADDR...] (hex guest addresses): once per retrace, log each 32-bit word
+// that changed since the last retrace, with Aurora's frame number, to tie game state
+// (a string ID, a flag) to what the captures show.
+void WatchGuestWords() {
+    struct Watch { uint32_t addr; uint32_t last; bool seen; };
+    static std::vector<Watch> watches = [] {
+        std::vector<Watch> out;
+        if (const char* v = std::getenv("BW2_WATCH")) {
+            for (const char* p = v; *p != 0;) {
+                char* end = nullptr;
+                const uint32_t addr = static_cast<uint32_t>(std::strtoul(p, &end, 16));
+                if (end == p) break;
+                out.push_back(Watch{addr, 0, false});
+                p = (*end == ',') ? end + 1 : end;
+            }
+        }
+        return out;
+    }();
+    for (auto& w : watches) {
+        if (!Memory::Contains(w.addr, 4)) continue;
+        const uint32_t value = Memory::Read32(w.addr);
+        if (w.seen && value == w.last) continue;
+        std::fprintf(stderr, "[watch] frame=%u %08X: %08X%s\n", aurora::gfx::current_frame(), w.addr, value,
+                     w.seen ? "" : " (initial)");
+        w.last = value;
+        w.seen = true;
+    }
+}
 } // namespace
 
 void Bw2DeliverGxBreakpoint(CpuContext* ctx) {
@@ -114,6 +143,7 @@ void Bw2DeliverGxBreakpoint(CpuContext* ctx) {
     }
     TraceGuestThreads();
     CaptureRenderedFrame();
+    WatchGuestWords();
     if (ctx == nullptr || !g_breakPointPending.exchange(false, std::memory_order_acq_rel)) {
         return;
     }

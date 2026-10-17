@@ -177,7 +177,11 @@ static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertices, u3
       maxIdx = std::max(maxIdx, idx);
     }
     const auto& arr = st.arrays[a];
-    const u32 elems = arr.stride ? arr.size / arr.stride : 0;
+    // Elements the array holds for this attribute: interleaved arrays end with a partial
+    // stride, so the last element is in bounds when its own bytes are.
+    const auto& at = vf.attrs[a];
+    const u32 elemBytes = comp_type_size(static_cast<GXAttr>(a), at.type) * comp_cnt_count(static_cast<GXAttr>(a), at.cnt);
+    const u32 elems = arr.stride ? (arr.size >= elemBytes ? (arr.size - elemBytes) / arr.stride + 1 : 0) : 0;
     tex += fmt::format(" maxi{}={}/{}{}", a, maxIdx, elems, maxIdx >= elems ? "!" : "");
   }
   // PNMTXIDX histogram.

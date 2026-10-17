@@ -945,7 +945,11 @@ bool present_presentation_job(const PresentationJob& job) {
           webgpu::g_graphicsConfig.surfaceConfiguration.width,
           webgpu::g_graphicsConfig.surfaceConfiguration.height);
     }
-    if (!surfaceSizeChanged && window::is_presentable()) {
+    // AURORA_NO_PRESENT=1: render, capture and pace as usual but never acquire or present the
+    // swapchain image. For unattended runs on a locked or occluded screen, where the drawable
+    // acquisition blocks for a second per frame.
+    static const bool noPresent = std::getenv("AURORA_NO_PRESENT") != nullptr;
+    if (!surfaceSizeChanged && window::is_presentable() && !noPresent) {
       const auto acquireStarted = PresentClock::now();
       auto acquired = acquire_surface_texture();
       acquireDuration =
