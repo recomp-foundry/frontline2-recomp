@@ -8,15 +8,35 @@
 #include <aurora/aurora.h>
 
 #include <cstdint>
+#include "bw2_hle.h"
 #include "hle/gx/gx_internal.h"
 #include "memory.h"
 
 namespace {
 
+// Spans of the arrays the display list being decoded reads (GX__CallDisplayList fills
+// this from its scan, see DlArrayRange in hle/gx/gx_dl.cpp). A base the list writes
+// itself resolves to the bytes its draws cover instead of the rest of the RAM region,
+// which Aurora would otherwise upload whole (StagingCapacityError past 8 MB).
+struct ArraySpan {
+    uint32_t base = 0;
+    uint32_t size = 0;
+};
+constexpr size_t kMaxArraySpans = 128;
+ArraySpan g_arraySpans[kMaxArraySpans];
+size_t g_arraySpanCount = 0;
+
 const void* ResolveCpArrayBase(uint32_t cpValue, uint32_t* outSize) {
     const uint32_t address = DecodeCpArrayBaseGuestAddress(cpValue);
     if (address == 0) {
         return nullptr;
+    }
+    const uint32_t canonical = CanonicalizeGxMainRamAddress(address);
+    for (size_t i = 0; i < g_arraySpanCount; ++i) {
+        if (g_arraySpans[i].base == canonical && Memory::Contains(address, g_arraySpans[i].size)) {
+            *outSize = g_arraySpans[i].size;
+            return Memory::GetPointer(address, g_arraySpans[i].size);
+        }
     }
     // Bytes left in the RAM region that holds it (MEM1 or MEM2, any alias).
     uint32_t end = 0;
@@ -44,3 +64,18 @@ struct Register {
 } g_register;
 
 } // namespace
+
+void Bw2ClearDisplayListArraySpans() { g_arraySpanCount = 0; }
+
+void Bw2AddDisplayListArraySpan(unsigned int guestBase, unsigned int size) {
+    const uint32_t canonical = CanonicalizeGxMainRamAddress(guestBase);
+    for (size_t i = 0; i < g_arraySpanCount; ++i) {
+        if (g_arraySpans[i].base == canonical) {
+            if (size > g_arraySpans[i].size) g_arraySpans[i].size = size;
+            return;
+        }
+    }
+    if (g_arraySpanCount < kMaxArraySpans) {
+        g_arraySpans[g_arraySpanCount++] = ArraySpan{canonical, size};
+    }
+}

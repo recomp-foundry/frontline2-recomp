@@ -1,0 +1,220 @@
+diff -ruN a/runtime/src/hle/gx/gx_dl.cpp b/runtime/src/hle/gx/gx_dl.cpp
+--- a/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 20:33:26
++++ b/runtime/src/hle/gx/gx_dl.cpp	2026-10-16 20:34:31
+@@ -1,9 +1,12 @@
+ #include "gx_internal.h"
++#include "bw2_hle.h"  // BW2: display-list diagnostics
+ #include "gx_stream_common.h"
+ #include "gx_cp_decode.h"
+ #include "isa/big_endian.h"
+ 
++#include <cstdio>
+ #include <cstdlib>
++#include <exception>
+ #include <unordered_map>
+ 
+ // The display-list scan cache validates a cached scan against the live guest
+@@ -965,7 +968,11 @@
+                 if (!WalkDisplayList(nested, size, child, depth + 1)) return false;
+             }
+             ++layoutVersion;
++        } catch (const std::exception& e) {
++            Bw2DlNoteSwallowedException("display-list scan (nested)", e.what());
++            return false;
+         } catch (...) {
++            Bw2DlNoteSwallowedException("display-list scan (nested)", nullptr);
+             return false;
+         }
+         return true;
+@@ -1232,6 +1239,7 @@
+     GXCallDisplayList(packet, packetBytes);
+     GXMarkFrameWork();
+     SyncAppliedVtxStateFromHleReal();
++    Bw2DlCountRoute(5);
+ }
+ 
+ static bool ApplyAuroraArraysForDisplayList(const std::array<uint32_t, GX_VA_MAX_ATTR>& maxIdx,
+@@ -1372,6 +1380,62 @@
+     bool active_;
+     HleGxVertexStateSnapshot exit_{};
+ };
++
++// BW2_DL_TRACE_FRAME (hle/bw2/gx_dl_trace.cpp): one line per list with the route it took, the
++// Aurora draws it produced and how the HLE vertex state at its exit (g_hleGxState when this
++// runs) differs from its entry snapshot. Rows the snapshot does not carry cannot have changed.
++static void TraceDisplayListCall(uint32_t listAddr, uint32_t nbytes, const char* route, bool cached,
++                                 bool scanOk, bool nested, bool mixed, bool hasCpWrites,
++                                 bool hasArrayWrites, bool arraysOk, bool xfOk, GXVtxFmt dlVtxFmt,
++                                 const HleGxVertexStateSnapshot* entry, uint32_t drawsBefore,
++                                 uint32_t drawsAfter) {
++    char diff[1024];
++    size_t n = 0;
++    const auto append = [&](const char* format, auto... args) {
++        if (n >= sizeof(diff) - 1) return;
++        const int written = std::snprintf(diff + n, sizeof(diff) - n, format, args...);
++        if (written > 0) n = std::min(n + static_cast<size_t>(written), sizeof(diff) - 1);
++    };
++    diff[0] = 0;
++    if (entry != nullptr) {
++        if (entry->hasVtxDesc) {
++            for (int a = 0; a < 26; ++a) {
++                if (entry->vtxDesc[a] != g_hleGxState.vtxDesc[a]) {
++                    append(" vcd%d:%d->%d", a, static_cast<int>(entry->vtxDesc[a]),
++                           static_cast<int>(g_hleGxState.vtxDesc[a]));
++                }
++            }
++        }
++        for (uint32_t f = 0; f < 8; ++f) {
++            if ((entry->vtxAttrFmtRows & (1u << f)) == 0) continue;
++            for (int a = 0; a < 26; ++a) {
++                const auto& e = entry->vtxAttrFmt[f][a];
++                const auto& x = g_hleGxState.vtxAttrFmt[f][a];
++                if (!SameVtxAttrFmt(e, x)) {
++                    append(" vat%u.%d:c%dt%df%d->c%dt%df%d", f, a, static_cast<int>(e.cnt), static_cast<int>(e.type),
++                           static_cast<int>(e.frac), static_cast<int>(x.cnt), static_cast<int>(x.type),
++                           static_cast<int>(x.frac));
++                }
++            }
++        }
++        if (entry->hasVtxArray) {
++            for (int a = 0; a < 26; ++a) {
++                const auto& e = entry->vtxArray[a];
++                const auto& x = g_hleGxState.vtxArray[a];
++                if (e.base != x.base || e.stride != x.stride) {
++                    append(" arr%d:%08X/%u->%08X/%u", a, e.base, e.stride, x.base, x.stride);
++                }
++            }
++        }
++    }
++    Bw2DlTraceLine("list %08X+%u %s%s scan=%d nested=%d mixed=%d cp=%d arrw=%d arrays=%d xf=%d fmt=%d "
++                   "draws=#%u..#%u entry=%s diff:%s",
++                   listAddr, nbytes, route, cached ? " cached" : "", scanOk, nested, mixed, hasCpWrites,
++                   hasArrayWrites, arraysOk, xfOk, static_cast<int>(dlVtxFmt), drawsBefore, drawsAfter,
++                   entry == nullptr ? "none" : (entry->hasVtxDesc && entry->hasVtxArray &&
++                                                entry->vtxAttrFmtRows == kAllVtxAttrFmtRows) ? "full" : "partial",
++                   diff[0] ? diff : " none");
++}
+ } // namespace
+ 
+ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes) {
+@@ -1395,12 +1459,21 @@
+         const bool mayContainDraw =
+             (cached != nullptr) ? cached->mayContainDraw : DisplayListMayContainDraw(list, nbytes);
+         if (!mayContainDraw) {
++            const bool trace = Bw2DlTraceFrame();
++            HleGxVertexStateSnapshot entryState;
++            if (trace) entryState = CaptureGxVertexState();
++            const uint32_t drawsBefore = trace ? aurora_draw_index() : 0u;
+             EnsureAuroraFrameActive();
+             GXMarkFrameWork();
+             ApplyAuroraMatrixArraysFromHle();
+             GXCallDisplayList(list, nbytes);
+             DlCpStateVisitor cpState;  // BW2: the HLE layout follows the list's CP writes
+             WalkDisplayList(list, nbytes, cpState, 0);
++            Bw2DlCountRoute(0);
++            if (trace) {
++                TraceDisplayListCall(listAddr, nbytes, "regs", cached != nullptr, true, false, false, true, false,
++                                     true, true, GX_MAX_VTXFMT, &entryState, drawsBefore, aurora_draw_index());
++            }
+             // The republish is required even for register-only lists (verified by
+             // experiment: dropping it corrupts in-race geometry decode). It is
+             // instead memoized inside SyncAppliedVtxStateFromHleReal, so a run of
+@@ -1522,9 +1595,15 @@
+             }
+         }
+ 
++        const bool trace = Bw2DlTraceFrame();
++        const uint32_t drawsBefore = trace ? aurora_draw_index() : 0u;
++        const HleGxVertexStateSnapshot* traceEntry = haveStateBeforeScan ? &stateBeforeScan : nullptr;
++        bool flattenVerbatimRoute = auroraStream == list;
++        // BW2_DL_ENTRY_LAYOUT=0: experiment switch, publishes the exit state as before patch 0011.
++        const bool useEntryLayout = Bw2DlEntryLayoutEnabled() && dlHasCpWrites && haveStateBeforeScan;
+         if (needsFlatten) {
+             bool flattenApplyOk = flattenOk && scanOk && auroraStream != nullptr && auroraStreamBytes != 0;
+-            const EntryLayout entryLayout(dlHasCpWrites && haveStateBeforeScan, stateBeforeScan);
++            const EntryLayout entryLayout(useEntryLayout, stateBeforeScan);
+             if (flattenApplyOk) {
+                 ApplyAuroraVtxDesc();
+                 ApplyAuroraVtxAttrFmtForDisplayList(dlVtxFmt, dlVtxFmtMixed);
+@@ -1533,6 +1612,13 @@
+                 const bool flattenXfOk =
+                     ApplyAuroraIndexedXFArraysForDisplayList(maxXfIdx, maxXfBytes, sawXfIdx);
+                 flattenApplyOk = flattenArraysOk && flattenXfOk;
++                if (trace && !flattenApplyOk) {
++                    Bw2DlTraceLine("list %08X+%u flat apply failed: arrays=%d xf=%d -> interp", listAddr, nbytes,
++                                   flattenArraysOk, flattenXfOk);
++                }
++            } else if (trace) {
++                Bw2DlTraceLine("list %08X+%u flat unavailable: flattenOk=%d scanOk=%d bytes=%u -> interp", listAddr,
++                               nbytes, flattenOk, scanOk, auroraStreamBytes);
+             }
+             if (flattenApplyOk) {
+                 EnsureAuroraFrameActive();
+@@ -1541,6 +1627,13 @@
+                 entryLayout.Finish();
+                 // No flip back to GX_DIRECT here
+                 SyncAppliedVtxStateFromHleReal();
++                Bw2DlCountRoute(flattenVerbatimRoute ? 1 : 2);
++                if (trace) {
++                    TraceDisplayListCall(listAddr, nbytes, flattenVerbatimRoute ? "flat-verbatim" : "flat-copy",
++                                         cached != nullptr, scanOk, dlHasNestedDl, dlVtxFmtMixed, dlHasCpWrites,
++                                         dlHasArrayStateWrites, true, true, dlVtxFmt, traceEntry, drawsBefore,
++                                         aurora_draw_index());
++                }
+                 return;
+             }
+ 
+@@ -1548,7 +1641,7 @@
+             bool applyOk = scanOk;
+             bool arraysOk = false;
+             bool xfOk = false;
+-            const EntryLayout entryLayout(dlHasCpWrites && haveStateBeforeScan, stateBeforeScan);
++            const EntryLayout entryLayout(useEntryLayout, stateBeforeScan);
+             if (scanOk) {
+                 ApplyAuroraVtxDesc();
+                 ApplyAuroraVtxAttrFmtForDisplayList(dlVtxFmt, dlVtxFmtMixed);
+@@ -1556,6 +1649,10 @@
+                 xfOk = ApplyAuroraIndexedXFArraysForDisplayList(maxXfIdx, maxXfBytes, sawXfIdx);
+                 applyOk = arraysOk && xfOk;
+             }
++            if (trace && !applyOk) {
++                Bw2DlTraceLine("list %08X+%u direct apply failed: scan=%d arrays=%d xf=%d -> interp", listAddr,
++                               nbytes, scanOk, arraysOk, xfOk);
++            }
+             if (applyOk) {
+                 EnsureAuroraFrameActive();
+                 GXMarkFrameWork();
+@@ -1563,6 +1660,12 @@
+                 entryLayout.Finish();
+ 
+                 SyncAppliedVtxStateFromHleReal();
++                Bw2DlCountRoute(3);
++                if (trace) {
++                    TraceDisplayListCall(listAddr, nbytes, "direct", cached != nullptr, scanOk, dlHasNestedDl,
++                                         dlVtxFmtMixed, dlHasCpWrites, dlHasArrayStateWrites, arraysOk, xfOk, dlVtxFmt,
++                                         traceEntry, drawsBefore, aurora_draw_index());
++                }
+                 return;
+             }
+ 
+@@ -1576,7 +1679,19 @@
+         InvalidateAppliedAuroraState();
+         ParseDisplayList(list, nbytes);
+         InvalidateAppliedAuroraState();
+-    } catch (...) {}
++        Bw2DlCountRoute(4);
++        if (trace) {
++            TraceDisplayListCall(listAddr, nbytes, "interp", cached != nullptr, scanOk, dlHasNestedDl, dlVtxFmtMixed,
++                                 dlHasCpWrites, dlHasArrayStateWrites, false, false, dlVtxFmt, traceEntry,
++                                 drawsBefore, aurora_draw_index());
++        }
++    } catch (const std::exception& e) {
++        // BW2: an exception here (Aurora's StagingCapacityError among them) drops the rest of
++        // the list without a trace; count and report it (hle/bw2/gx_dl_trace.cpp).
++        Bw2DlNoteSwallowedException("GX__CallDisplayList", e.what());
++    } catch (...) {
++        Bw2DlNoteSwallowedException("GX__CallDisplayList", nullptr);
++    }
+ }
+ 
+ PPC_NATIVE_OVERRIDE_VOID(80172F64, GX__CallDisplayList_80172f64, (uint32_t listAddr, uint32_t nbytes), (listAddr, nbytes));

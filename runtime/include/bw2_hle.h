@@ -32,3 +32,22 @@ bool Bw2KeyboardRemoteConnected(unsigned int chan);
 // Autoplay script (hle/bw2/keyboard_remote.cpp): the DVD layer reports each
 // file's first read, which BW2_AUTOSCRIPT "wait=" steps match against.
 void Bw2NoteDvdRead(const char* hostPath);
+
+// Display-list diagnostics (hle/bw2/gx_dl_trace.cpp), used by hle/gx/gx_dl.cpp.
+// BW2_DL_TRACE_FRAME=N: Bw2DlTraceFrame() is true while Aurora records frame N;
+// Bw2DlTraceLine prints one "[dltrace]" line (printf format).
+bool Bw2DlTraceFrame();
+void Bw2DlTraceLine(const char* format, ...);
+// Route taken by each GX__CallDisplayList (0 regs, 1 flat-verbatim, 2 flat-copy, 3 direct,
+// 4 interp, 5 lyt), summarised every 300 frames.
+void Bw2DlCountRoute(int route);
+// Exceptions the display-list path catches and drops: counted, first one per frame logged.
+void Bw2DlNoteSwallowedException(const char* where, const char* what);
+// BW2_DL_ENTRY_LAYOUT=0 disables publishing the entry layout (patch 0011) for experiments.
+bool Bw2DlEntryLayoutEnabled();
+
+// Spans of the arrays the display list being decoded reads, for the CP array base
+// resolver (hle/bw2/gx_array_base.cpp): a base written inside the list resolves to the
+// bytes its draws cover. GX__CallDisplayList fills the table before each list and clears it after.
+void Bw2ClearDisplayListArraySpans();
+void Bw2AddDisplayListArraySpan(unsigned int guestBase, unsigned int size);

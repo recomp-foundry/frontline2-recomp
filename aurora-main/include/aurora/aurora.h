@@ -166,6 +166,8 @@ void aurora_request_frame_capture(uint32_t frame, const char* outputPath);
 // nullptr when unmapped; *outSize receives the bytes readable from there.
 typedef const void* (*AuroraArrayBaseResolver)(uint32_t cpValue, uint32_t* outSize);
 void aurora_set_array_base_resolver(AuroraArrayBaseResolver resolver);
+// Draws decoded so far in the frame being recorded (the "#N" of AURORA_DRAW_TRACE_FRAME).
+uint32_t aurora_draw_index(void);
 bool aurora_flush_efb_copies_to_ram();
 bool aurora_flush_efb_copy_to_ram(void* dest);
 

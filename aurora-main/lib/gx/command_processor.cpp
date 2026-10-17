@@ -16,6 +16,7 @@
 #include <tracy/Tracy.hpp>
 
 #include <algorithm>
+#include <bitset>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -48,23 +49,96 @@ bool draw_trace_active() noexcept {
   return std::find(frames.begin(), frames.end(), frame) != frames.end();
 }
 
-static u32 s_traceDrawIndex = 0;
-static u32 s_traceDrawFrame = UINT32_MAX;
+static u32 s_drawIndex;
 
 void draw_trace_note(const char* what) noexcept {
   if (!draw_trace_active()) return;
-  Log.warn("[trace] f{} #{} {}", gfx::current_frame(), s_traceDrawIndex, what);
+  Log.warn("[trace] f{} #{} {}", gfx::current_frame(), s_drawIndex, what);
 }
 
-static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertices) {
+// AURORA_SKIP_DRAW_RANGE=a-b (per-frame draw index, as printed by the trace) drops
+// those draws, to attribute pixels to draws on a screen with a stable draw order.
+static bool skip_draw_by_index(u32 index) noexcept {
+  static const std::pair<u32, u32> range = [] {
+    std::pair<u32, u32> out{UINT32_MAX, 0};
+    if (const char* v = std::getenv("AURORA_SKIP_DRAW_RANGE")) {
+      char* end = nullptr;
+      out.first = static_cast<u32>(std::strtoul(v, &end, 10));
+      out.second = (*end == '-') ? static_cast<u32>(std::strtoul(end + 1, nullptr, 10)) : out.first;
+    }
+    return out;
+  }();
+  return index >= range.first && index <= range.second;
+}
+
+// Per-frame draw counter: it drives the trace's "#N" and AURORA_SKIP_DRAW_RANGE, and the
+// runtime's display-list trace reads it (aurora_draw_index) to pair lists with draws.
+static u32 s_drawIndexFrame = UINT32_MAX;
+static u32 next_draw_index() noexcept {
+  const u32 frame = gfx::current_frame();
+  if (frame != s_drawIndexFrame) {
+    s_drawIndexFrame = frame;
+    s_drawIndex = 0;
+  }
+  return s_drawIndex++;
+}
+
+// Byte offset of `attr` inside one vertex of format `fmt`, and the vertex size; mirrors
+// calculate_last_vtx_size.
+static u32 vertex_attr_offset(GXVtxFmt fmt, GXAttr wanted) noexcept {
+  const auto& vtxFmt = g_gxState.vtxFmts[fmt];
+  u32 offset = 0;
+  for (int i = GX_VA_PNMTXIDX; i <= GX_VA_TEX7; ++i) {
+    if (i == wanted) return offset;
+    const auto attr = static_cast<GXAttr>(i);
+    const auto& attrFmt = vtxFmt.attrs[i];
+    switch (g_gxState.vtxDesc[i]) {
+    case GX_NONE:
+      break;
+    case GX_DIRECT:
+      offset += comp_type_size(attr, attrFmt.type) * comp_cnt_count(attr, attrFmt.cnt);
+      break;
+    case GX_INDEX8:
+      offset += (attr == GX_VA_NRM && attrFmt.cnt == GX_NRM_NBT3) ? 3 : 1;
+      break;
+    case GX_INDEX16:
+      offset += (attr == GX_VA_NRM && attrFmt.cnt == GX_NRM_NBT3) ? 6 : 2;
+      break;
+    }
+  }
+  return offset;
+}
+
+static float read_component(const u8* p, GXCompType type, u8 frac) noexcept {
+  switch (type) {
+  case GX_U8:
+    return static_cast<float>(p[0]) / static_cast<float>(1u << frac);
+  case GX_S8:
+    return static_cast<float>(static_cast<int8_t>(p[0])) / static_cast<float>(1u << frac);
+  case GX_U16:
+    return static_cast<float>((p[0] << 8) | p[1]) / static_cast<float>(1u << frac);
+  case GX_S16:
+    return static_cast<float>(static_cast<int16_t>((p[0] << 8) | p[1])) / static_cast<float>(1u << frac);
+  case GX_F32: {
+    const u32 bits = (static_cast<u32>(p[0]) << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+    float f;
+    std::memcpy(&f, &bits, 4);
+    return f;
+  }
+  default:
+    return 0.f;
+  }
+}
+
+// Every draw of the traced frame: state, textures, vertex layout, arrays, and a CPU reference
+// transform of the first vertices (position -> current/per-vertex PN matrix -> projection) so a
+// draw that should be visible can be told apart from one whose inputs are already wrong.
+static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertices, u32 index) {
   if (!draw_trace_active()) return;
   const u32 frame = gfx::current_frame();
-  if (frame != s_traceDrawFrame) {
-    s_traceDrawFrame = frame;
-    s_traceDrawIndex = 0;
-  }
-  const u32 index = s_traceDrawIndex++;
   const auto& st = g_gxState;
+  const GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & 7u);
+  const auto& vf = st.vtxFmts[fmt];
   std::string tex;
   for (u32 i = 0; i < st.numTevStages && i < st.tevStages.size(); ++i) {
     const auto& stage = st.tevStages[i];
@@ -79,42 +153,125 @@ static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertices) {
   for (int a = GX_VA_PNMTXIDX; a <= GX_VA_TEX7; ++a) {
     if (st.vtxDesc[a] != GX_NONE) desc |= 1u << a;
   }
-  if (st.vtxDesc[GX_VA_PNMTXIDX] != GX_NONE) {
-    const auto& vf = st.vtxFmts[cmd & 7u];
-    for (int a : {GX_VA_POS, GX_VA_NRM, GX_VA_TEX0}) {
-      const auto& at = vf.attrs[a];
+  const bool perVertexMtx = st.vtxDesc[GX_VA_PNMTXIDX] == GX_DIRECT;
+  // Vertex formats and arrays of the attributes that place and texture the mesh.
+  for (int a : {GX_VA_POS, GX_VA_NRM, GX_VA_TEX0}) {
+    if (st.vtxDesc[a] == GX_NONE) continue;
+    const auto& at = vf.attrs[a];
+    tex += fmt::format(" A{}:d{}c{}t{}f{}", a, static_cast<int>(st.vtxDesc[a]), static_cast<int>(at.cnt),
+                       static_cast<int>(at.type), static_cast<int>(at.frac));
+    if (st.vtxDesc[a] == GX_INDEX8 || st.vtxDesc[a] == GX_INDEX16) {
       const auto& arr = st.arrays[a];
-      tex += fmt::format(" A{}:t{}c{}y{}f{} arr={}/{}/{}", a, static_cast<int>(st.vtxDesc[a]), static_cast<int>(at.cnt),
-                         static_cast<int>(at.type), static_cast<int>(at.frac), arr.data, arr.size, arr.stride);
+      tex += fmt::format(" arr={}/{}/{}{}", arr.data, arr.size, arr.stride, arr.cachedRange.size ? "" : " up");
     }
-    if (const auto* raw = static_cast<const u8*>(st.arrays[GX_VA_POS].data); raw != nullptr) {
-      const auto s16 = [&](u32 i) { return static_cast<int16_t>((raw[i * 2] << 8) | raw[i * 2 + 1]); };
-      tex += fmt::format(" pos0=({},{},{}) pos1=({},{},{})", s16(0), s16(1), s16(2), s16(3), s16(4), s16(5));
+  }
+  // Max index read per indexed attribute vs. the elements the array holds.
+  const u32 n = std::min<u32>(vtxCount, 4096);
+  for (int a : {GX_VA_POS, GX_VA_NRM, GX_VA_TEX0}) {
+    if (st.vtxDesc[a] != GX_INDEX8 && st.vtxDesc[a] != GX_INDEX16) continue;
+    const u32 off = vertex_attr_offset(fmt, static_cast<GXAttr>(a));
+    u32 maxIdx = 0;
+    for (u32 v = 0; v < n; ++v) {
+      const u8* p = vertices + v * vtxSize + off;
+      const u32 idx = st.vtxDesc[a] == GX_INDEX8 ? p[0] : ((p[0] << 8) | p[1]);
+      maxIdx = std::max(maxIdx, idx);
     }
-    {
-      const auto& p = st.pnMtx[1].pos;
-      tex += fmt::format(" M1rot=({:.3f},{:.3f},{:.3f})", p.m0[0], p.m0[1], p.m0[2]);
+    const auto& arr = st.arrays[a];
+    const u32 elems = arr.stride ? arr.size / arr.stride : 0;
+    tex += fmt::format(" maxi{}={}/{}{}", a, maxIdx, elems, maxIdx >= elems ? "!" : "");
+  }
+  // PNMTXIDX histogram.
+  if (perVertexMtx) {
+    u32 mn = 255, mx = 0, ge30 = 0, nonMul3 = 0;
+    std::bitset<256> seen;
+    for (u32 v = 0; v < n; ++v) {
+      const u8 raw = vertices[v * vtxSize];
+      mn = std::min<u32>(mn, raw);
+      mx = std::max<u32>(mx, raw);
+      seen.set(raw);
+      if (raw / 3u >= MaxPnMtx) ++ge30;
+      if (raw % 3u != 0) ++nonMul3;
     }
-    // CPU reference transform of the first vertices (PNMTXIDX direct, POS index16 s16 XYZ only).
-    const auto* posArr = static_cast<const u8*>(st.arrays[GX_VA_POS].data);
-    if (posArr != nullptr && st.vtxDesc[GX_VA_POS] == GX_INDEX16 && vf.attrs[GX_VA_POS].type == GX_S16) {
-      const float scale = 1.0f / static_cast<float>(1u << vf.attrs[GX_VA_POS].frac);
-      for (u32 v = 0; v < 3 && v < vtxCount; ++v) {
-        const u8* vtx = vertices + v * vtxSize;
-        const u32 m = vtx[0] / 3u;
-        const u32 idx = (vtx[1] << 8) | vtx[2];
-        const u8* e = posArr + idx * st.arrays[GX_VA_POS].stride;
-        const float x = static_cast<int16_t>((e[0] << 8) | e[1]) * scale;
-        const float y = static_cast<int16_t>((e[2] << 8) | e[3]) * scale;
-        const float z = static_cast<int16_t>((e[4] << 8) | e[5]) * scale;
-        const auto& M = st.pnMtx[std::min<u32>(m, MaxPnMtx - 1)].pos;
-        tex += fmt::format(" v{}[m{} i{}]=({:.2f},{:.2f},{:.2f})", v, vtx[0], idx,
-                           M.m0[0] * x + M.m0[1] * y + M.m0[2] * z + M.m0[3],
-                           M.m1[0] * x + M.m1[1] * y + M.m1[2] * z + M.m1[3],
-                           M.m2[0] * x + M.m2[1] * y + M.m2[2] * z + M.m2[3]);
+    tex += fmt::format(" pnidx[{}..{}] distinct={} ge30={} non3={}", mn, mx, seen.count(), ge30, nonMul3);
+  }
+  // CPU reference: NDC box of the first 64 vertices.
+  if (st.vtxDesc[GX_VA_POS] != GX_NONE) {
+    const auto& pa = vf.attrs[GX_VA_POS];
+    const u32 posOff = vertex_attr_offset(fmt, GX_VA_POS);
+    const u32 comps = pa.cnt == GX_POS_XY ? 2u : 3u;
+    const u32 compSize = comp_type_size(GX_VA_POS, pa.type);
+    const u8 frac = pa.type == GX_F32 ? 0 : pa.frac;
+    const auto& arr = st.arrays[GX_VA_POS];
+    float mn[3] = {1e30f, 1e30f, 1e30f}, mx[3] = {-1e30f, -1e30f, -1e30f};
+    float wmn = 1e30f, wmx = -1e30f;
+    u32 counted = 0, front = 0, bad = 0, oob = 0;
+    std::string firstVerts;
+    const u32 nv = std::min<u32>(vtxCount, 64);
+    for (u32 v = 0; v < nv; ++v) {
+      const u8* vtx = vertices + v * vtxSize;
+      const u8* e = nullptr;
+      u32 idx = 0;
+      if (st.vtxDesc[GX_VA_POS] == GX_DIRECT) {
+        e = vtx + posOff;
+      } else {
+        const u8* p = vtx + posOff;
+        idx = st.vtxDesc[GX_VA_POS] == GX_INDEX8 ? p[0] : ((p[0] << 8) | p[1]);
+        if (arr.data == nullptr || arr.stride == 0 || (idx + 1u) * arr.stride > arr.size) {
+          ++oob;
+          continue;
+        }
+        e = static_cast<const u8*>(arr.data) + idx * arr.stride;
+      }
+      float pos[3] = {0.f, 0.f, 0.f};
+      for (u32 c = 0; c < comps; ++c) pos[c] = read_component(e + c * compSize, pa.type, frac);
+      const u32 m = perVertexMtx ? vtx[0] / 3u : st.currentPnMtx;
+      if (m >= MaxPnMtx) {
+        ++bad;
+        continue;
+      }
+      const auto& M = st.pnMtx[m].pos;
+      const float mv[3] = {M.m0[0] * pos[0] + M.m0[1] * pos[1] + M.m0[2] * pos[2] + M.m0[3],
+                           M.m1[0] * pos[0] + M.m1[1] * pos[1] + M.m1[2] * pos[2] + M.m1[3],
+                           M.m2[0] * pos[0] + M.m2[1] * pos[1] + M.m2[2] * pos[2] + M.m2[3]};
+      const auto& P = st.proj;
+      float clip[4];
+      for (u32 r = 0; r < 4; ++r) clip[r] = P[r][0] * mv[0] + P[r][1] * mv[1] + P[r][2] * mv[2] + P[r][3];
+      if (v < 2) {
+        firstVerts += fmt::format(" v{}[m{} i{}]=({:.2f},{:.2f},{:.2f})->({:.2f},{:.2f},{:.2f})", v, m, idx, pos[0],
+                                  pos[1], pos[2], mv[0], mv[1], mv[2]);
+      }
+      if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) || !std::isfinite(clip[2]) || !std::isfinite(clip[3])) {
+        ++bad;
+        continue;
+      }
+      ++counted;
+      wmn = std::min(wmn, clip[3]);
+      wmx = std::max(wmx, clip[3]);
+      if (clip[3] <= 0.f) continue;
+      ++front;
+      for (u32 c = 0; c < 3; ++c) {
+        const float ndc = clip[c] / clip[3];
+        mn[c] = std::min(mn[c], ndc);
+        mx[c] = std::max(mx[c], ndc);
       }
     }
-    for (u32 m = 0; m < 10; ++m) {
+    const char* verdict = "none";
+    if (front > 0) {
+      const float extent = std::max({mx[0] - mn[0], mx[1] - mn[1]});
+      const bool overlaps = mx[0] >= -1.f && mn[0] <= 1.f && mx[1] >= -1.f && mn[1] <= 1.f;
+      verdict = extent > 20.f ? "huge" : overlaps ? "onscreen" : "offscreen";
+    } else if (counted > 0) {
+      verdict = "behind";
+    }
+    tex += fmt::format(" ref[{}]: {} front={}/{} bad={} oob={} w={:.2f}..{:.2f}", nv, verdict, front, counted, bad, oob, wmn,
+                       wmx);
+    if (front > 0) {
+      tex += fmt::format(" ndc=({:.2f},{:.2f},{:.2f})..({:.2f},{:.2f},{:.2f})", mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]);
+    }
+    tex += firstVerts;
+  }
+  if (perVertexMtx) {
+    for (u32 m = 0; m < MaxPnMtx; ++m) {
       const auto& p = st.pnMtx[m].pos;
       tex += fmt::format(" M{}=({:.1f},{:.1f},{:.1f})", m, p.m0[3], p.m1[3], p.m2[3]);
     }
@@ -2424,7 +2581,8 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   }
 
   u32 totalVtxBytes = vtxCount * vtxSize;
-  trace_draw(cmd, vtxCount, vtxSize, data + pos);
+  const u32 drawIndex = next_draw_index();
+  trace_draw(cmd, vtxCount, vtxSize, data + pos, drawIndex);
   s_lastDraw.pos = pos - 3;
   s_lastDraw.size = size;
   s_lastDraw.cmd = cmd;
@@ -2457,6 +2615,10 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
       pos += totalVtxBytes;
       return true;
     }
+  }
+  if (skip_draw_by_index(drawIndex)) UNLIKELY {
+    pos += totalVtxBytes;
+    return true;
   }
 
   DrawData* mergeTarget = nullptr;
@@ -2540,6 +2702,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount,
     if (array.cachedRange.size > 0) {
       ranges.vaRanges[i - GX_VA_POS] = array.cachedRange;
     } else {
+      // A raw CP array base resolves to "the rest of RAM" (aurora_set_array_base_resolver), so
+      // an array published that way is uploaded whole; past 1 MB that is almost certainly such a
+      // base, and 8 MB+ cannot fit the storage buffer at all (StagingCapacityError).
+      if (array.size > (1u << 20)) UNLIKELY {
+        static u32 bigUploadLogCount = 0;
+        if (bigUploadLogCount++ < 32) {
+          Log.warn("vertex array {} uploaded whole: {} bytes from {} (frame {}, draw #{})", i, array.size, array.data,
+                   gfx::current_frame(), s_drawIndex - 1);
+        }
+      }
       const auto range = gfx::push_storage(static_cast<const uint8_t*>(array.data), array.size);
       ranges.vaRanges[i - GX_VA_POS] = range;
       array.cachedRange = range;
@@ -2767,3 +2939,6 @@ bool handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
 } // namespace aurora::gx::fifo
 
 void aurora_set_array_base_resolver(AuroraArrayBaseResolver resolver) { aurora::gx::fifo::g_arrayBaseResolver = resolver; }
+// Draws decoded so far in the current frame (the trace's "#N"); the runtime's display-list
+// trace reads it to pair each list with the draws it produced.
+uint32_t aurora_draw_index(void) { return aurora::gx::fifo::s_drawIndex; }

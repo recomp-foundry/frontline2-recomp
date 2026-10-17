@@ -1,9 +1,12 @@
 #include "gx_internal.h"
+#include "bw2_hle.h"  // BW2: display-list diagnostics
 #include "gx_stream_common.h"
 #include "gx_cp_decode.h"
 #include "isa/big_endian.h"
 
+#include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <unordered_map>
 
 // The display-list scan cache validates a cached scan against the live guest
@@ -60,6 +63,7 @@ static void ApplyAuroraVtxDesc();
 static void ApplyAuroraVtxAttrFmtForDisplayList(GXVtxFmt fmt, bool mixed);
 static void SyncAppliedVtxStateFromHleReal();
 static void SubmitLytDrawPacket(const uint8_t* packet, uint32_t packetBytes);
+static uint32_t GetIndexedAttrElementSizeBytes(GXAttr attr, const VtxAttrFmt& fmt);
 
 static inline uint8_t ScaleLytAlpha(uint8_t alpha, uint32_t modulate) {
     const int32_t product = static_cast<int32_t>(alpha) * static_cast<int32_t>(modulate & 0xFFu);
@@ -414,6 +418,21 @@ struct DlCpWrite {
     uint32_t value = 0;
 };
 
+// BW2: one guest array a list reads through an indexed attribute (GX_VA_POS..GX_VA_TEX7) or
+// an indexed XF load (GX_POS_MTX_ARRAY..GX_LIGHT_ARRAY): the base and stride in effect at
+// the draw that read it, the element size, and the highest index read. The scan records
+// them in stream order, so the arrays Aurora is handed are the ones the draws use, not the
+// ones set when the list is called: BW2's lists set their own VCD/arrays before drawing
+// (the title's globe) and switch arrays between meshes.
+struct DlArrayRange {
+    uint8_t attr = 0;
+    uint32_t base = 0;
+    uint32_t stride = 0;
+    uint32_t elemSize = 0;
+    uint32_t maxIdx = 0;
+};
+constexpr size_t kDlMaxArrayRanges = 128;
+
 
 static HleGxVertexStateSnapshot CaptureGxVertexStateForCpWrites(const std::vector<DlCpWrite>& writes) {
     HleGxVertexStateSnapshot snapshot;
@@ -474,6 +493,7 @@ struct DlScanCacheEntry {
     bool needsFlatten = false;
     bool flattenOk = false;
     bool flattenVerbatim = false;
+    std::vector<DlArrayRange> arrayRanges{};
 };
 
 struct DlScanCacheRecord {
@@ -921,6 +941,7 @@ struct DlIndexScanVisitor {
     bool* outHasArrayStateWrites;
     bool* outHasCpWrites;
     std::vector<DlCpWrite>* outCpWrites;
+    std::vector<DlArrayRange>* outRanges;
     // Every walk - including each nested one - gets its own layout generation, so
     // a cached layout can only be reused inside the walk that built it.
     uint32_t layoutVersion = 1;
@@ -949,7 +970,24 @@ struct DlIndexScanVisitor {
             if (!sawXfIdx[attr] || index > maxXfIdx[attr]) maxXfIdx[attr] = index;
             if (bytes > maxXfBytes[attr]) maxXfBytes[attr] = bytes;
             sawXfIdx[attr] = true;
+            const auto& arr = g_hleGxState.vtxArray[attr];
+            if (!RecordArrayRange(attr, arr.base, arr.stride, bytes, index)) return false;
         }
+        return true;
+    }
+    // False only when the list reads more distinct arrays than the table holds; the
+    // caller then falls back to the interpreter, which sets arrays per draw.
+    bool RecordArrayRange(int attr, uint32_t base, uint32_t stride, uint32_t elemSize, uint32_t maxIndex) {
+        if (outRanges == nullptr) return true;
+        for (auto& range : *outRanges) {
+            if (range.attr == attr && range.base == base && range.stride == stride) {
+                if (maxIndex > range.maxIdx) range.maxIdx = maxIndex;
+                if (elemSize > range.elemSize) range.elemSize = elemSize;
+                return true;
+            }
+        }
+        if (outRanges->size() >= kDlMaxArrayRanges) return false;
+        outRanges->push_back(DlArrayRange{static_cast<uint8_t>(attr), base, stride, elemSize, maxIndex});
         return true;
     }
     bool OnCallDisplayList(uint32_t addr, uint32_t size, int depth) {
@@ -961,11 +999,15 @@ struct DlIndexScanVisitor {
                 DlIndexScanVisitor child{maxIdx,         sawIdx,         maxXfIdx,
                                          maxXfBytes,     sawXfIdx,       outFmt,
                                          outFmtMixed,    outHasNestedDl, outHasArrayStateWrites,
-                                         outHasCpWrites, outCpWrites};
+                                         outHasCpWrites, outCpWrites,    outRanges};
                 if (!WalkDisplayList(nested, size, child, depth + 1)) return false;
             }
             ++layoutVersion;
+        } catch (const std::exception& e) {
+            Bw2DlNoteSwallowedException("display-list scan (nested)", e.what());
+            return false;
         } catch (...) {
+            Bw2DlNoteSwallowedException("display-list scan (nested)", nullptr);
             return false;
         }
         return true;
@@ -978,11 +1020,29 @@ struct DlIndexScanVisitor {
         pendingLayout = &GetScanVertexLayout(vtxfmt, LayoutCache(), layoutVersion, layoutGeneration);
         return pendingLayout->vertexSize;
     }
-    bool OnDraw(const uint8_t*, uint8_t, GXVtxFmt, uint16_t vtxCount, const uint8_t* vertices,
+    bool OnDraw(const uint8_t*, uint8_t, GXVtxFmt vtxfmt, uint16_t vtxCount, const uint8_t* vertices,
                 uint32_t&) {
+        if (outRanges == nullptr) {
+            ScanDLVerticesMaxIndices(vertices, vtxCount, pendingLayout->indexedSteps,
+                                     pendingLayout->indexedStepCount, pendingLayout->vertexSize, maxIdx,
+                                     sawIdx);
+            return true;
+        }
+        // Per draw, so each index bound lands on the array in effect at that draw.
+        std::array<uint32_t, GX_VA_MAX_ATTR> drawMaxIdx{};
+        std::array<bool, GX_VA_MAX_ATTR> drawSawIdx{};
         ScanDLVerticesMaxIndices(vertices, vtxCount, pendingLayout->indexedSteps,
-                                 pendingLayout->indexedStepCount, pendingLayout->vertexSize, maxIdx,
-                                 sawIdx);
+                                 pendingLayout->indexedStepCount, pendingLayout->vertexSize, drawMaxIdx,
+                                 drawSawIdx);
+        for (int attr = 0; attr < GX_VA_MAX_ATTR; ++attr) {
+            if (!drawSawIdx[attr]) continue;
+            if (!sawIdx[attr] || drawMaxIdx[attr] > maxIdx[attr]) maxIdx[attr] = drawMaxIdx[attr];
+            sawIdx[attr] = true;
+            const auto& arr = g_hleGxState.vtxArray[attr];
+            const uint32_t elemSize = GetIndexedAttrElementSizeBytes(
+                static_cast<GXAttr>(attr), g_hleGxState.vtxAttrFmt[vtxfmt][attr]);
+            if (!RecordArrayRange(attr, arr.base, arr.stride, elemSize, drawMaxIdx[attr])) return false;
+        }
         return true;
     }
 };
@@ -995,11 +1055,12 @@ static bool ScanDisplayListMaxIndices(const uint8_t* data, uint32_t nbytes,
                                       std::array<bool, GX_VA_MAX_ATTR>& sawXfIdx,
                                       GXVtxFmt* outFmt, bool* outFmtMixed, bool* outHasNestedDl,
                                       bool* outHasArrayStateWrites, bool* outHasCpWrites,
-                                      std::vector<DlCpWrite>* outCpWrites) {
+                                      std::vector<DlCpWrite>* outCpWrites,
+                                      std::vector<DlArrayRange>* outRanges) {
     DlIndexScanVisitor visitor{maxIdx,         sawIdx,         maxXfIdx,
                                maxXfBytes,     sawXfIdx,       outFmt,
                                outFmtMixed,    outHasNestedDl, outHasArrayStateWrites,
-                               outHasCpWrites, outCpWrites};
+                               outHasCpWrites, outCpWrites,    outRanges};
     return WalkDisplayList(data, nbytes, visitor, 0);
 }
 
@@ -1232,84 +1293,54 @@ static void SubmitLytDrawPacket(const uint8_t* packet, uint32_t packetBytes) {
     GXCallDisplayList(packet, packetBytes);
     GXMarkFrameWork();
     SyncAppliedVtxStateFromHleReal();
+    Bw2DlCountRoute(5);
 }
 
-static bool ApplyAuroraArraysForDisplayList(const std::array<uint32_t, GX_VA_MAX_ATTR>& maxIdx,
-                                            const std::array<bool, GX_VA_MAX_ATTR>& sawIdx,
-                                            GXVtxFmt vtxfmt,
-                                            bool vtxfmtMixed) {
+// Publishes the arrays a list reads (DlArrayRange, recorded by the scan) with the span its
+// draws cover. The first range of an attribute is the array in effect at the first draw
+// that reads it; later ranges come from the list's own CP base writes, which Aurora decodes
+// in order and resolves through the span table filled here (hle/bw2/gx_array_base.cpp), so
+// they are bounded instead of "the rest of RAM".
+static bool ApplyAuroraArraysForDisplayList(const std::vector<DlArrayRange>& ranges) {
     static std::array<std::array<std::vector<uint8_t>, 2>, GX_VA_MAX_ATTR> s_packedArrays;
     static std::array<uint32_t, GX_VA_MAX_ATTR> s_packedArrayCursor{};
     bool ok = true;
-    if (vtxfmt >= GX_MAX_VTXFMT) {
-        vtxfmt = g_hleGxState.currentVtxFmt;
-    }
-    for (int attr = 0; attr < 26; ++attr) {
-        const GXAttrType type = g_hleGxState.vtxDesc[attr]; if (type != GX_INDEX8 && type != GX_INDEX16) continue;
-        if (!sawIdx[attr]) continue;
-        const auto& arr = g_hleGxState.vtxArray[attr];
-        if (arr.base == 0 || arr.stride == 0) { ok = false; continue; }
-        const uint32_t count = maxIdx[attr] + 1u;
-        const GXAttr gxAttr = static_cast<GXAttr>(attr);
-        const auto& fmt = g_hleGxState.vtxAttrFmt[vtxfmt][attr];
-        const uint32_t elemSize = GetIndexedAttrElementSizeBytes(gxAttr, fmt);
-        if (elemSize == 0) {
+    std::array<bool, GX_VA_MAX_ATTR> published{};
+    Bw2ClearDisplayListArraySpans();
+    for (const auto& range : ranges) {
+        const int attr = range.attr;
+        if (attr >= GX_VA_MAX_ATTR) { ok = false; continue; }
+        if (range.base == 0 || range.stride == 0 || range.elemSize == 0) { ok = false; continue; }
+        const uint32_t count = range.maxIdx + 1u;
+        const uint32_t span = static_cast<uint32_t>((count - 1u) * range.stride) + range.elemSize;
+        if (!Memory::Contains(range.base, span)) {
             ok = false;
             continue;
         }
-        const uint32_t span = (count > 0) ? (static_cast<uint32_t>((count - 1u) * arr.stride) + elemSize) : 0u;
-        const bool needsPack = arr.stride > 0xffu;
-        if (!Memory::Contains(arr.base, span)) {
-            ok = false;
-            continue;
-        }
-        const uint8_t* hostPtr = static_cast<const uint8_t*>(GuestToHostPtr(arr.base, span));
+        const uint8_t* hostPtr = static_cast<const uint8_t*>(GuestToHostPtr(range.base, span));
         if (!hostPtr) {
             ok = false;
             continue;
         }
+        Bw2AddDisplayListArraySpan(range.base, span);
+        if (published[attr]) continue;
+        published[attr] = true;
+        const GXAttr gxAttr = static_cast<GXAttr>(attr);
         // Aurora's storage-fetch shaders consume guest big-endian bytes directly
         // and honor the array stride. Keep the backing pointer stable so per-frame
         // storage uploads can be cached instead of repacking every display-list call.
-        if (!needsPack) {
-            ApplyAuroraArrayIfChanged(gxAttr, hostPtr, span, static_cast<uint8_t>(arr.stride));
+        if (range.stride <= 0xffu) {
+            ApplyAuroraArrayIfChanged(gxAttr, hostPtr, span, static_cast<uint8_t>(range.stride));
             continue;
         }
+        if (attr < GX_VA_POS || attr > GX_VA_TEX7) { ok = false; continue; }
         auto& packed = s_packedArrays[attr][++s_packedArrayCursor[attr] & 1u];
-        if (!PackIndexedAttrData(hostPtr, arr.stride, count, elemSize, packed)) {
+        if (!PackIndexedAttrData(hostPtr, range.stride, count, range.elemSize, packed)) {
             ok = false;
             continue;
         }
-        ApplyAuroraArrayIfChanged(gxAttr, packed.data(), static_cast<uint32_t>(packed.size()), static_cast<uint8_t>(elemSize));
-    }
-    return ok;
-}
-
-static bool ApplyAuroraIndexedXFArraysForDisplayList(const std::array<uint32_t, GX_VA_MAX_ATTR>& maxXfIdx,
-                                                     const std::array<uint32_t, GX_VA_MAX_ATTR>& maxXfBytes,
-                                                     const std::array<bool, GX_VA_MAX_ATTR>& sawXfIdx) {
-    bool ok = true;
-    for (int attr = GX_POS_MTX_ARRAY; attr <= GX_LIGHT_ARRAY; ++attr) {
-        if (!sawXfIdx[attr]) {
-            continue;
-        }
-        const auto& arr = g_hleGxState.vtxArray[attr];
-        const uint32_t bytes = maxXfBytes[attr];
-        if (arr.base == 0 || arr.stride == 0 || bytes == 0) {
-            ok = false;
-            continue;
-        }
-        const uint32_t span = maxXfIdx[attr] * arr.stride + bytes;
-        if (!Memory::Contains(arr.base, span)) {
-            ok = false;
-            continue;
-        }
-        const uint8_t* hostPtr = static_cast<const uint8_t*>(GuestToHostPtr(arr.base, span));
-        if (!hostPtr) {
-            ok = false;
-            continue;
-        }
-        ApplyAuroraArrayIfChanged(static_cast<GXAttr>(attr), hostPtr, span, static_cast<uint8_t>(arr.stride));
+        ApplyAuroraArrayIfChanged(gxAttr, packed.data(), static_cast<uint32_t>(packed.size()),
+                                  static_cast<uint8_t>(range.elemSize));
     }
     return ok;
 }
@@ -1372,6 +1403,70 @@ private:
     bool active_;
     HleGxVertexStateSnapshot exit_{};
 };
+
+// BW2_DL_TRACE_FRAME (hle/bw2/gx_dl_trace.cpp): one line per list with the route it took, the
+// Aurora draws it produced and how the HLE vertex state at its exit (g_hleGxState when this
+// runs) differs from its entry snapshot. Rows the snapshot does not carry cannot have changed.
+static void TraceDisplayListCall(uint32_t listAddr, uint32_t nbytes, const char* route, bool cached,
+                                 bool scanOk, bool nested, bool mixed, bool hasCpWrites,
+                                 bool hasArrayWrites, bool arraysOk, bool xfOk, GXVtxFmt dlVtxFmt,
+                                 const HleGxVertexStateSnapshot* entry, uint32_t drawsBefore,
+                                 uint32_t drawsAfter, const std::vector<DlArrayRange>* ranges) {
+    char diff[1024];
+    size_t n = 0;
+    const auto append = [&](const char* format, auto... args) {
+        if (n >= sizeof(diff) - 1) return;
+        const int written = std::snprintf(diff + n, sizeof(diff) - n, format, args...);
+        if (written > 0) n = std::min(n + static_cast<size_t>(written), sizeof(diff) - 1);
+    };
+    diff[0] = 0;
+    if (entry != nullptr) {
+        if (entry->hasVtxDesc) {
+            for (int a = 0; a < 26; ++a) {
+                if (entry->vtxDesc[a] != g_hleGxState.vtxDesc[a]) {
+                    append(" vcd%d:%d->%d", a, static_cast<int>(entry->vtxDesc[a]),
+                           static_cast<int>(g_hleGxState.vtxDesc[a]));
+                }
+            }
+        }
+        for (uint32_t f = 0; f < 8; ++f) {
+            if ((entry->vtxAttrFmtRows & (1u << f)) == 0) continue;
+            for (int a = 0; a < 26; ++a) {
+                const auto& e = entry->vtxAttrFmt[f][a];
+                const auto& x = g_hleGxState.vtxAttrFmt[f][a];
+                if (!SameVtxAttrFmt(e, x)) {
+                    append(" vat%u.%d:c%dt%df%d->c%dt%df%d", f, a, static_cast<int>(e.cnt), static_cast<int>(e.type),
+                           static_cast<int>(e.frac), static_cast<int>(x.cnt), static_cast<int>(x.type),
+                           static_cast<int>(x.frac));
+                }
+            }
+        }
+        if (entry->hasVtxArray) {
+            for (int a = 0; a < 26; ++a) {
+                const auto& e = entry->vtxArray[a];
+                const auto& x = g_hleGxState.vtxArray[a];
+                if (e.base != x.base || e.stride != x.stride) {
+                    append(" arr%d:%08X/%u->%08X/%u", a, e.base, e.stride, x.base, x.stride);
+                }
+            }
+        }
+    }
+    if (ranges != nullptr) {
+        append(" ranges[%zu]:", ranges->size());
+        size_t shown = 0;
+        for (const auto& r : *ranges) {
+            if (shown++ >= 12) { append(" ..."); break; }
+            append(" a%u:%08X/%u/%u/%u", r.attr, r.base, r.stride, r.elemSize, r.maxIdx);
+        }
+    }
+    Bw2DlTraceLine("list %08X+%u %s%s scan=%d nested=%d mixed=%d cp=%d arrw=%d arrays=%d xf=%d fmt=%d "
+                   "draws=#%u..#%u entry=%s diff:%s",
+                   listAddr, nbytes, route, cached ? " cached" : "", scanOk, nested, mixed, hasCpWrites,
+                   hasArrayWrites, arraysOk, xfOk, static_cast<int>(dlVtxFmt), drawsBefore, drawsAfter,
+                   entry == nullptr ? "none" : (entry->hasVtxDesc && entry->hasVtxArray &&
+                                                entry->vtxAttrFmtRows == kAllVtxAttrFmtRows) ? "full" : "partial",
+                   diff[0] ? diff : " none");
+}
 } // namespace
 
 extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes) {
@@ -1395,12 +1490,22 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
         const bool mayContainDraw =
             (cached != nullptr) ? cached->mayContainDraw : DisplayListMayContainDraw(list, nbytes);
         if (!mayContainDraw) {
+            const bool trace = Bw2DlTraceFrame();
+            HleGxVertexStateSnapshot entryState;
+            if (trace) entryState = CaptureGxVertexState();
+            const uint32_t drawsBefore = trace ? aurora_draw_index() : 0u;
             EnsureAuroraFrameActive();
             GXMarkFrameWork();
             ApplyAuroraMatrixArraysFromHle();
             GXCallDisplayList(list, nbytes);
             DlCpStateVisitor cpState;  // BW2: the HLE layout follows the list's CP writes
             WalkDisplayList(list, nbytes, cpState, 0);
+            Bw2DlCountRoute(0);
+            if (trace) {
+                TraceDisplayListCall(listAddr, nbytes, "regs", cached != nullptr, true, false, false, true, false,
+                                     true, true, GX_MAX_VTXFMT, &entryState, drawsBefore, aurora_draw_index(),
+                                     nullptr);
+            }
             // The republish is required even for register-only lists (verified by
             // experiment: dropping it corrupts in-race geometry decode). It is
             // instead memoized inside SyncAppliedVtxStateFromHleReal, so a run of
@@ -1415,6 +1520,8 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
         bool dlHasNestedDl = false;
         bool dlHasArrayStateWrites = false;
         bool dlHasCpWrites = false;
+        std::vector<DlArrayRange> scanRanges;
+        const std::vector<DlArrayRange>* arrayRanges = &scanRanges;
 
         HleGxVertexStateSnapshot stateBeforeScan;
         bool haveStateBeforeScan = false;
@@ -1439,6 +1546,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
             dlHasCpWrites = entry.dlHasCpWrites;
             needsFlatten = entry.needsFlatten;
             flattenOk = entry.flattenOk;
+            arrayRanges = &entry.arrayRanges;
             // A scan/flatten only mutates HLE vertex state through the CP writes
             // embedded in the list. Replaying the recorded writes in stream order
             // lands g_hleGxState exactly where the uncached path would have left it.
@@ -1466,7 +1574,8 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
             haveStateBeforeScan = true;
             scanOk = ScanDisplayListMaxIndices(list, nbytes, maxIdx, sawIdx, maxXfIdx, maxXfBytes, sawXfIdx,
                                                &dlVtxFmt, &dlVtxFmtMixed, &dlHasNestedDl,
-                                               &dlHasArrayStateWrites, &dlHasCpWrites, &cpWrites);
+                                               &dlHasArrayStateWrites, &dlHasCpWrites, &cpWrites,
+                                               &scanRanges);
             needsFlatten = dlHasNestedDl || dlHasArrayStateWrites || dlHasCpWrites;
             bool flattenVerbatim = true;
             auto& flattened = FlattenDisplayListScratch();
@@ -1511,6 +1620,7 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
                 entry.needsFlatten = needsFlatten;
                 entry.flattenOk = flattenOk;
                 entry.flattenVerbatim = flattenVerbatim;
+                entry.arrayRanges = scanRanges;
                 const bool storeFlattened = needsFlatten && flattenOk && !flattenVerbatim;
 
                 const uint64_t contentDigest =
@@ -1522,25 +1632,44 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
             }
         }
 
+        const bool trace = Bw2DlTraceFrame();
+        const uint32_t drawsBefore = trace ? aurora_draw_index() : 0u;
+        const HleGxVertexStateSnapshot* traceEntry = haveStateBeforeScan ? &stateBeforeScan : nullptr;
+        bool flattenVerbatimRoute = auroraStream == list;
+        // BW2_DL_ENTRY_LAYOUT=0: experiment switch, publishes the exit state as before patch 0011.
+        const bool useEntryLayout = Bw2DlEntryLayoutEnabled() && dlHasCpWrites && haveStateBeforeScan;
         if (needsFlatten) {
             bool flattenApplyOk = flattenOk && scanOk && auroraStream != nullptr && auroraStreamBytes != 0;
-            const EntryLayout entryLayout(dlHasCpWrites && haveStateBeforeScan, stateBeforeScan);
+            const EntryLayout entryLayout(useEntryLayout, stateBeforeScan);
             if (flattenApplyOk) {
                 ApplyAuroraVtxDesc();
                 ApplyAuroraVtxAttrFmtForDisplayList(dlVtxFmt, dlVtxFmtMixed);
-                const bool flattenArraysOk =
-                    ApplyAuroraArraysForDisplayList(maxIdx, sawIdx, dlVtxFmt, dlVtxFmtMixed);
-                const bool flattenXfOk =
-                    ApplyAuroraIndexedXFArraysForDisplayList(maxXfIdx, maxXfBytes, sawXfIdx);
-                flattenApplyOk = flattenArraysOk && flattenXfOk;
+                const bool flattenArraysOk = ApplyAuroraArraysForDisplayList(*arrayRanges);
+                const bool flattenXfOk = true;  // matrix arrays are ranges too
+                flattenApplyOk = flattenArraysOk;
+                if (trace && !flattenApplyOk) {
+                    Bw2DlTraceLine("list %08X+%u flat apply failed: arrays=%d xf=%d -> interp", listAddr, nbytes,
+                                   flattenArraysOk, flattenXfOk);
+                }
+            } else if (trace) {
+                Bw2DlTraceLine("list %08X+%u flat unavailable: flattenOk=%d scanOk=%d bytes=%u -> interp", listAddr,
+                               nbytes, flattenOk, scanOk, auroraStreamBytes);
             }
             if (flattenApplyOk) {
                 EnsureAuroraFrameActive();
                 GXMarkFrameWork();
                 GXCallDisplayList(auroraStream, auroraStreamBytes);
+                Bw2ClearDisplayListArraySpans();
                 entryLayout.Finish();
                 // No flip back to GX_DIRECT here
                 SyncAppliedVtxStateFromHleReal();
+                Bw2DlCountRoute(flattenVerbatimRoute ? 1 : 2);
+                if (trace) {
+                    TraceDisplayListCall(listAddr, nbytes, flattenVerbatimRoute ? "flat-verbatim" : "flat-copy",
+                                         cached != nullptr, scanOk, dlHasNestedDl, dlVtxFmtMixed, dlHasCpWrites,
+                                         dlHasArrayStateWrites, true, true, dlVtxFmt, traceEntry, drawsBefore,
+                                         aurora_draw_index(), arrayRanges);
+                }
                 return;
             }
 
@@ -1548,21 +1677,32 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
             bool applyOk = scanOk;
             bool arraysOk = false;
             bool xfOk = false;
-            const EntryLayout entryLayout(dlHasCpWrites && haveStateBeforeScan, stateBeforeScan);
+            const EntryLayout entryLayout(useEntryLayout, stateBeforeScan);
             if (scanOk) {
                 ApplyAuroraVtxDesc();
                 ApplyAuroraVtxAttrFmtForDisplayList(dlVtxFmt, dlVtxFmtMixed);
-                arraysOk = ApplyAuroraArraysForDisplayList(maxIdx, sawIdx, dlVtxFmt, dlVtxFmtMixed);
-                xfOk = ApplyAuroraIndexedXFArraysForDisplayList(maxXfIdx, maxXfBytes, sawXfIdx);
-                applyOk = arraysOk && xfOk;
+                arraysOk = ApplyAuroraArraysForDisplayList(*arrayRanges);
+                xfOk = true;  // matrix arrays are ranges too
+                applyOk = arraysOk;
+            }
+            if (trace && !applyOk) {
+                Bw2DlTraceLine("list %08X+%u direct apply failed: scan=%d arrays=%d xf=%d -> interp", listAddr,
+                               nbytes, scanOk, arraysOk, xfOk);
             }
             if (applyOk) {
                 EnsureAuroraFrameActive();
                 GXMarkFrameWork();
                 GXCallDisplayList(list, nbytes);
+                Bw2ClearDisplayListArraySpans();
                 entryLayout.Finish();
 
                 SyncAppliedVtxStateFromHleReal();
+                Bw2DlCountRoute(3);
+                if (trace) {
+                    TraceDisplayListCall(listAddr, nbytes, "direct", cached != nullptr, scanOk, dlHasNestedDl,
+                                         dlVtxFmtMixed, dlHasCpWrites, dlHasArrayStateWrites, arraysOk, xfOk, dlVtxFmt,
+                                         traceEntry, drawsBefore, aurora_draw_index(), arrayRanges);
+                }
                 return;
             }
 
@@ -1571,12 +1711,25 @@ extern "C" void GX__CallDisplayList_80172f64(uint32_t listAddr, uint32_t nbytes)
         if (haveStateBeforeScan) {
             RestoreGxVertexState(stateBeforeScan);
         }
+        Bw2ClearDisplayListArraySpans();
         EnsureAuroraFrameActive();
         GXMarkFrameWork();
         InvalidateAppliedAuroraState();
         ParseDisplayList(list, nbytes);
         InvalidateAppliedAuroraState();
-    } catch (...) {}
+        Bw2DlCountRoute(4);
+        if (trace) {
+            TraceDisplayListCall(listAddr, nbytes, "interp", cached != nullptr, scanOk, dlHasNestedDl, dlVtxFmtMixed,
+                                 dlHasCpWrites, dlHasArrayStateWrites, false, false, dlVtxFmt, traceEntry,
+                                 drawsBefore, aurora_draw_index(), arrayRanges);
+        }
+    } catch (const std::exception& e) {
+        // BW2: an exception here (Aurora's StagingCapacityError among them) drops the rest of
+        // the list without a trace; count and report it (hle/bw2/gx_dl_trace.cpp).
+        Bw2DlNoteSwallowedException("GX__CallDisplayList", e.what());
+    } catch (...) {
+        Bw2DlNoteSwallowedException("GX__CallDisplayList", nullptr);
+    }
 }
 
 PPC_NATIVE_OVERRIDE_VOID(802B1458, GX__CallDisplayList_80172f64, (uint32_t listAddr, uint32_t nbytes), (listAddr, nbytes));
