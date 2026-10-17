@@ -286,21 +286,37 @@ bool Bw2KeyboardRemoteSample(unsigned int chan, WiiRemoteInput::KpadSample& samp
         g_pointer.y = Script().y;
         sample.hold |= Script().hold;
         if (Script().stickAuto) {
-            float x = 0.0f, y = 0.0f;
-            const uint32_t age = aurora_tracked_billboard(&x, &y);
+            // Minimap steering: AURORA_TRACK_HUD="32x32,14;16x16,9" = objective star blip and
+            // player blip. The minimap keeps the camera forward up, so the blip offset is the
+            // direction to walk: x to turn, y (up) to advance.
+            float sx = 0.0f, sy = 0.0f, px = 0.0f, py = 0.0f;
+            const uint32_t starAge = aurora_tracked_hud(0, &sx, &sy);
+            const uint32_t playerAge = aurora_tracked_hud(1, &px, &py);
+            float dx = 0.0f, dy = 0.0f;
+            bool fresh = false;
+            if (starAge <= 30 && playerAge <= 30) {
+                dx = (sx - px) * 320.0f;  // pixels
+                dy = (sy - py) * 240.0f;
+                fresh = true;
+            }
             static int logCountdown = 0;
             if (--logCountdown <= 0) {
                 logCountdown = 60;
-                std::fprintf(stderr, "[autostick] target x=%.2f y=%.2f age=%u\n", x, y, age);
+                std::fprintf(stderr, "[autostick] star=(%.2f,%.2f) age=%u player=(%.2f,%.2f) age=%u d=(%.0f,%.0f)\n",
+                             sx, sy, starAge, px, py, playerAge, dx, dy);
             }
-            if (age <= 30) {
-                // On screen: walk forward, veering toward it; the camera follows the player.
-                const float turn = std::max(-1.0f, std::min(1.0f, x * 2.0f));
-                sample.stick[0] = turn;
-                sample.stick[1] = std::fabs(x) > 0.6f ? 0.3f : 1.0f;
+            if (fresh) {
+                const float len = std::sqrt(dx * dx + dy * dy);
+                if (len > 2.0f) {
+                    sample.stick[0] = dx / len;
+                    sample.stick[1] = dy / len;
+                } else {
+                    sample.stick[0] = 0.0f;
+                    sample.stick[1] = 0.0f;
+                }
             } else {
-                sample.stick[0] = -1.0f;  // off screen: turn until it shows up
-                sample.stick[1] = 0.15f;
+                sample.stick[0] = 0.0f;  // no minimap: walk straight
+                sample.stick[1] = 1.0f;
             }
         } else {
             sample.stick[0] = Script().stickX;

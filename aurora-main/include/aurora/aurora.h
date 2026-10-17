@@ -171,6 +171,8 @@ uint32_t aurora_draw_index(void);
 // Screen position (NDC) of the billboard AURORA_TRACK_BILLBOARD=WxH,fmt selects; returns frames
 // since it was last drawn (UINT32_MAX: never).
 uint32_t aurora_tracked_billboard(float* x, float* y);
+// Same for the 2D sprite `index` of AURORA_TRACK_HUD=WxH,fmt[;WxH,fmt...].
+uint32_t aurora_tracked_hud(uint32_t index, float* x, float* y);
 bool aurora_flush_efb_copies_to_ram();
 bool aurora_flush_efb_copy_to_ram(void* dest);
 

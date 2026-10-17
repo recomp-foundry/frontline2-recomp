@@ -151,14 +151,59 @@ static TrackedBillboard s_trackedBillboard = [] {
   return t;
 }();
 
+// AURORA_TRACK_HUD=WxH,fmt[;WxH,fmt...]: the same for 2D (orthographic) draws, up to four
+// textures; BW2's minimap draws the objective star and the player as such sprites.
+constexpr u32 kMaxTrackedHud = 4;
+static TrackedBillboard s_trackedHud[kMaxTrackedHud];
+static u32 s_trackedHudCount = [] {
+  u32 count = 0;
+  if (const char* v = std::getenv("AURORA_TRACK_HUD")) {
+    const char* p = v;
+    while (*p != 0 && count < kMaxTrackedHud) {
+      unsigned w = 0, h = 0, f = 0;
+      if (std::sscanf(p, "%ux%u,%u", &w, &h, &f) != 3) break;
+      s_trackedHud[count].width = w; s_trackedHud[count].height = h; s_trackedHud[count].format = f;
+      s_trackedHud[count].enabled = true;
+      ++count;
+      const char* next = std::strchr(p, ';');
+      if (next == nullptr) break;
+      p = next + 1;
+    }
+  }
+  return count;
+}();
+
+static bool first_vertex_ndc(u8 cmd, const u8* vertices, float& outX, float& outY);
+
 static void track_billboard(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertices) {
-  auto& t = s_trackedBillboard;
-  if (!t.enabled || vtxCount != 4) return;
+  if (vtxCount != 4) return;
   const auto& st = g_gxState;
   if (st.numTevStages == 0 || st.tevStages[0].texMapId == GX_TEXMAP_NULL) return;
   const auto& obj = st.loadedTextures[static_cast<u32>(st.tevStages[0].texMapId) & 7u];
-  if (obj.width() != t.width || obj.height() != t.height || static_cast<u32>(obj.format()) != t.format) return;
-  if (st.vtxDesc[GX_VA_POS] == GX_NONE) return;
+  const u32 w = obj.width(), h = obj.height(), f = static_cast<u32>(obj.format());
+  if (st.projType == GX_ORTHOGRAPHIC) {
+    for (u32 i = 0; i < s_trackedHudCount; ++i) {
+      auto& t = s_trackedHud[i];
+      if (w != t.width || h != t.height || f != t.format) continue;
+      float x, y;
+      if (first_vertex_ndc(cmd, vertices, x, y)) {
+        t.x = x; t.y = y; t.frame = gfx::current_frame(); t.seen = true;
+      }
+    }
+    return;
+  }
+  auto& t = s_trackedBillboard;
+  if (!t.enabled || w != t.width || h != t.height || f != t.format) return;
+  float x, y;
+  if (first_vertex_ndc(cmd, vertices, x, y)) {
+    t.x = x; t.y = y; t.frame = gfx::current_frame(); t.seen = true;
+  }
+}
+
+// NDC of a draw's first vertex through the current PN matrix and projection.
+static bool first_vertex_ndc(u8 cmd, const u8* vertices, float& outX, float& outY) {
+  const auto& st = g_gxState;
+  if (st.vtxDesc[GX_VA_POS] == GX_NONE) return false;
   const GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & 7u);
   const auto& pa = st.vtxFmts[fmt].attrs[GX_VA_POS];
   const u32 posOff = vertex_attr_offset(fmt, GX_VA_POS);
@@ -172,13 +217,13 @@ static void track_billboard(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertice
     const auto& arr = st.arrays[GX_VA_POS];
     const u8* p = vertices + posOff;
     const u32 idx = st.vtxDesc[GX_VA_POS] == GX_INDEX8 ? p[0] : ((p[0] << 8) | p[1]);
-    if (arr.data == nullptr || arr.stride == 0 || (idx + 1u) * arr.stride > arr.size) return;
+    if (arr.data == nullptr || arr.stride == 0 || (idx + 1u) * arr.stride > arr.size) return false;
     e = static_cast<const u8*>(arr.data) + idx * arr.stride;
   }
   float pos[3] = {0.f, 0.f, 0.f};
   for (u32 c = 0; c < comps; ++c) pos[c] = read_component(e + c * compSize, pa.type, frac);
   const u32 m = st.vtxDesc[GX_VA_PNMTXIDX] == GX_DIRECT ? vertices[0] / 3u : st.currentPnMtx;
-  if (m >= MaxPnMtx) return;
+  if (m >= MaxPnMtx) return false;
   const auto& M = st.pnMtx[m].pos;
   const float mv[3] = {M.m0[0] * pos[0] + M.m0[1] * pos[1] + M.m0[2] * pos[2] + M.m0[3],
                        M.m1[0] * pos[0] + M.m1[1] * pos[1] + M.m1[2] * pos[2] + M.m1[3],
@@ -186,11 +231,10 @@ static void track_billboard(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertice
   const auto& P = st.proj;
   float clip[4];
   for (u32 r = 0; r < 4; ++r) clip[r] = P[r][0] * mv[0] + P[r][1] * mv[1] + P[r][2] * mv[2] + P[r][3];
-  if (!(clip[3] > 0.f) || !std::isfinite(clip[0]) || !std::isfinite(clip[1])) return;
-  t.x = clip[0] / clip[3];
-  t.y = clip[1] / clip[3];
-  t.frame = gfx::current_frame();
-  t.seen = true;
+  if (!(clip[3] > 0.f) || !std::isfinite(clip[0]) || !std::isfinite(clip[1])) return false;
+  outX = clip[0] / clip[3];
+  outY = clip[1] / clip[3];
+  return true;
 }
 
 // Every draw of the traced frame: state, textures, vertex layout, arrays, and a CPU reference
@@ -3015,6 +3059,16 @@ uint32_t aurora_draw_index(void) { return aurora::gx::fifo::s_drawIndex; }
 uint32_t aurora_tracked_billboard(float* x, float* y) {
   const auto& t = aurora::gx::fifo::s_trackedBillboard;
   if (!t.seen) return UINT32_MAX;
+  if (x) *x = t.x;
+  if (y) *y = t.y;
+  const uint32_t now = aurora::gfx::current_frame();
+  return now >= t.frame ? now - t.frame : 0u;
+}
+// Latest screen position (NDC) of HUD sprite `index` of AURORA_TRACK_HUD; frames since drawn.
+uint32_t aurora_tracked_hud(uint32_t index, float* x, float* y) {
+  using namespace aurora::gx::fifo;
+  if (index >= s_trackedHudCount || !s_trackedHud[index].seen) return UINT32_MAX;
+  const auto& t = s_trackedHud[index];
   if (x) *x = t.x;
   if (y) *y = t.y;
   const uint32_t now = aurora::gfx::current_frame();
