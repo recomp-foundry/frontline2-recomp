@@ -738,9 +738,15 @@ inline std::string Bw2TracedIndirectDerefs(uint32_t r3, uint32_t r4, uint32_t r5
 
 
 // Call trace shared by InvokeIndirectCpu and InvokeDirectCpu (see BW2_TRACE_INDIRECT).
+// BW2_TRACE_INDIRECT_R3=<hex>: only calls whose r3 (this) equals that value are logged.
 inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cpu) {
     Bw2TraceCallState st;
     if (target == 0 || !Bw2IsTracedIndirectTarget(target)) return st;
+    static const uint32_t onlyR3 = [] {
+        const char* v = std::getenv("BW2_TRACE_INDIRECT_R3");
+        return v != nullptr ? static_cast<uint32_t>(std::strtoul(v, nullptr, 16)) : 0u;
+    }();
+    if (onlyR3 != 0 && cpu->gpr[3] != onlyR3) return st;
     static uint64_t calls = 0;
     st.traced = true;
     st.target = target;
