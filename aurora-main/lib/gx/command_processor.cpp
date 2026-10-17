@@ -56,7 +56,7 @@ void draw_trace_note(const char* what) noexcept {
   Log.warn("[trace] f{} #{} {}", gfx::current_frame(), s_traceDrawIndex, what);
 }
 
-static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize) {
+static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertices) {
   if (!draw_trace_active()) return;
   const u32 frame = gfx::current_frame();
   if (frame != s_traceDrawFrame) {
@@ -78,6 +78,46 @@ static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize) {
   u32 desc = 0;
   for (int a = GX_VA_PNMTXIDX; a <= GX_VA_TEX7; ++a) {
     if (st.vtxDesc[a] != GX_NONE) desc |= 1u << a;
+  }
+  if (st.vtxDesc[GX_VA_PNMTXIDX] != GX_NONE) {
+    const auto& vf = st.vtxFmts[cmd & 7u];
+    for (int a : {GX_VA_POS, GX_VA_NRM, GX_VA_TEX0}) {
+      const auto& at = vf.attrs[a];
+      const auto& arr = st.arrays[a];
+      tex += fmt::format(" A{}:t{}c{}y{}f{} arr={}/{}/{}", a, static_cast<int>(st.vtxDesc[a]), static_cast<int>(at.cnt),
+                         static_cast<int>(at.type), static_cast<int>(at.frac), arr.data, arr.size, arr.stride);
+    }
+    if (const auto* raw = static_cast<const u8*>(st.arrays[GX_VA_POS].data); raw != nullptr) {
+      const auto s16 = [&](u32 i) { return static_cast<int16_t>((raw[i * 2] << 8) | raw[i * 2 + 1]); };
+      tex += fmt::format(" pos0=({},{},{}) pos1=({},{},{})", s16(0), s16(1), s16(2), s16(3), s16(4), s16(5));
+    }
+    {
+      const auto& p = st.pnMtx[1].pos;
+      tex += fmt::format(" M1rot=({:.3f},{:.3f},{:.3f})", p.m0[0], p.m0[1], p.m0[2]);
+    }
+    // CPU reference transform of the first vertices (PNMTXIDX direct, POS index16 s16 XYZ only).
+    const auto* posArr = static_cast<const u8*>(st.arrays[GX_VA_POS].data);
+    if (posArr != nullptr && st.vtxDesc[GX_VA_POS] == GX_INDEX16 && vf.attrs[GX_VA_POS].type == GX_S16) {
+      const float scale = 1.0f / static_cast<float>(1u << vf.attrs[GX_VA_POS].frac);
+      for (u32 v = 0; v < 3 && v < vtxCount; ++v) {
+        const u8* vtx = vertices + v * vtxSize;
+        const u32 m = vtx[0] / 3u;
+        const u32 idx = (vtx[1] << 8) | vtx[2];
+        const u8* e = posArr + idx * st.arrays[GX_VA_POS].stride;
+        const float x = static_cast<int16_t>((e[0] << 8) | e[1]) * scale;
+        const float y = static_cast<int16_t>((e[2] << 8) | e[3]) * scale;
+        const float z = static_cast<int16_t>((e[4] << 8) | e[5]) * scale;
+        const auto& M = st.pnMtx[std::min<u32>(m, MaxPnMtx - 1)].pos;
+        tex += fmt::format(" v{}[m{} i{}]=({:.2f},{:.2f},{:.2f})", v, vtx[0], idx,
+                           M.m0[0] * x + M.m0[1] * y + M.m0[2] * z + M.m0[3],
+                           M.m1[0] * x + M.m1[1] * y + M.m1[2] * z + M.m1[3],
+                           M.m2[0] * x + M.m2[1] * y + M.m2[2] * z + M.m2[3]);
+      }
+    }
+    for (u32 m = 0; m < 10; ++m) {
+      const auto& p = st.pnMtx[m].pos;
+      tex += fmt::format(" M{}=({:.1f},{:.1f},{:.1f})", m, p.m0[3], p.m1[3], p.m2[3]);
+    }
   }
   const auto& vp = st.logicalViewport;
   Log.warn("[trace] f{} #{} draw cmd=0x{:02X} n={} vs={} desc=0x{:05X} pnmtx={} proj={} vp={:.0f},{:.0f},{:.0f}x{:.0f} "
@@ -679,6 +719,12 @@ uint32_t process(const u8* data, u32 size, bool bigEndian) {
         break;
       }
       u8* srcData = ((u8*)array.data) + byteOffset;
+      if (draw_trace_active()) {
+        const std::string note = fmt::format("LOAD_INDX array={} idx={} len={} dst=0x{:03X} data={} stride={} first={}",
+                                             arrayType, srcArrayIdx, len, dstAddr, array.data, array.stride,
+                                             read_f32(srcData + 12, bigEndian));
+        draw_trace_note(note.c_str());
+      }
       if (!copy_xf_data(dstAddr, srcData, len, bigEndian)) {
 #ifndef NDEBUG
         Log.debug("Unimplemented indexed XF load (opcode 0x{:02X}, dstAddr=0x{:04X})", opcode, dstAddr);
@@ -2378,7 +2424,7 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   }
 
   u32 totalVtxBytes = vtxCount * vtxSize;
-  trace_draw(cmd, vtxCount, vtxSize);
+  trace_draw(cmd, vtxCount, vtxSize, data + pos);
   s_lastDraw.pos = pos - 3;
   s_lastDraw.size = size;
   s_lastDraw.cmd = cmd;

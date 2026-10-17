@@ -1,0 +1,15 @@
+diff -ruN a/runtime/src/hle/gx/gx_fifo.cpp b/runtime/src/hle/gx/gx_fifo.cpp
+--- a/runtime/src/hle/gx/gx_fifo.cpp	2026-10-16 17:52:45
++++ b/runtime/src/hle/gx/gx_fifo.cpp	2026-10-16 17:52:45
+@@ -433,6 +433,11 @@
+ 
+         if (cmd == GX_NOP_CMD || opcode == GX_CMD_INVL_VC_CMD) {
+             if (!consumeBytes(1, sink)) break;
++            // BW2: GXInvalidateVtxCache runs as guest code and only writes this byte. Aurora
++            // caches each vertex array upload by pointer until it sees the invalidate; BW2
++            // refills one CPU buffer per skinned mesh, so dropping it drew every mesh with
++            // another mesh's vertices.
++            if (opcode == GX_CMD_INVL_VC_CMD) GXInvalidateVtxCache();
+             continue;
+         }
+ 

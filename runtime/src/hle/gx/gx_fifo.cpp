@@ -433,6 +433,11 @@ void HleFifoWrite(u32 val, uint32_t sizeBytes) {
 
         if (cmd == GX_NOP_CMD || opcode == GX_CMD_INVL_VC_CMD) {
             if (!consumeBytes(1, sink)) break;
+            // BW2: GXInvalidateVtxCache runs as guest code and only writes this byte. Aurora
+            // caches each vertex array upload by pointer until it sees the invalidate; BW2
+            // refills one CPU buffer per skinned mesh, so dropping it drew every mesh with
+            // another mesh's vertices.
+            if (opcode == GX_CMD_INVL_VC_CMD) GXInvalidateVtxCache();
             continue;
         }
 
