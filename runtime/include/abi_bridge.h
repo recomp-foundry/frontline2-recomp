@@ -29,6 +29,13 @@ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx);
 // field is always removed, bloom when the user disabled it)
 inline bool Bw2IsTracedIndirectTarget(uint32_t target);
 inline void Bw2TraceStaticCall(uint32_t target, const CpuContext* ctx);
+inline void Bw2TraceStaticReturn(uint32_t target, const CpuContext* ctx);
+
+// Emitted by the translator after every static translated call (MKW_STATIC_TRANSLATED_CALL):
+// the exit-side counterpart of ApplyRuntimeCallOptions, used only by the call trace.
+inline void AfterRuntimeStaticCall(uint32_t target, CpuContext* ctx) {
+    if (ctx != nullptr && Bw2IsTracedIndirectTarget(target)) Bw2TraceStaticReturn(target, ctx);
+}
 
 inline void ApplyRuntimeCallOptions(uint32_t target, CpuContext* ctx) {
     // BW2_TRACE_INDIRECT also covers the static calls the translated code makes through
@@ -807,6 +814,22 @@ inline void Bw2TraceStaticCall(uint32_t target, const CpuContext* cpu) {
     std::fprintf(stderr, "[static] 0x%08X #%llu r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X f1=%g%s\n", target,
                  static_cast<unsigned long long>(calls), cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6],
                  cpu->fpr[1].d, Bw2TracedIndirectDerefs(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], 0u).c_str());
+}
+
+// BW2_TRACE_INDIRECT_DEREF chains are evaluated again on return (r3/r4/r5 as left by the callee),
+// so an in/out buffer passed in r4 can be read after the call.
+inline void Bw2TraceStaticReturn(uint32_t target, const CpuContext* cpu) {
+    static uint64_t calls = 0;
+    static const uint64_t traceEvery = [] {
+        const char* v = std::getenv("BW2_TRACE_INDIRECT_EVERY");
+        const uint64_t n = v != nullptr ? std::strtoull(v, nullptr, 10) : 500ull;
+        return n == 0 ? 1ull : n;
+    }();
+    ++calls;
+    if ((calls % traceEvery) != 0) return;
+    std::fprintf(stderr, "[static-ret] 0x%08X #%llu r3=0x%08X r4=0x%08X r5=0x%08X f1=%g%s\n", target,
+                 static_cast<unsigned long long>(calls), cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->fpr[1].d,
+                 Bw2TracedIndirectDerefs(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[3]).c_str());
 }
 
 inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
