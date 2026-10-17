@@ -1,0 +1,43 @@
+diff -ruN a/runtime/include/abi_bridge.h b/runtime/include/abi_bridge.h
+--- a/runtime/include/abi_bridge.h	2026-10-17 16:37:37
++++ b/runtime/include/abi_bridge.h	2026-10-17 16:37:37
+@@ -27,7 +27,13 @@
+ // static calls deliberately bypass InvokeDirectCpu for performance.
+ // (used for the path mask filtering in ScnRenderer::createPath: depth of
+ // field is always removed, bloom when the user disabled it)
++inline bool Bw2IsTracedIndirectTarget(uint32_t target);
++inline void Bw2TraceStaticCall(uint32_t target, const CpuContext* ctx);
++
+ inline void ApplyRuntimeCallOptions(uint32_t target, CpuContext* ctx) {
++    // BW2_TRACE_INDIRECT also covers the static calls the translated code makes through
++    // this hook (entry only: arguments, no return value).
++    if (ctx != nullptr && Bw2IsTracedIndirectTarget(target)) Bw2TraceStaticCall(target, ctx);
+     if (target == 0x8023BD38u) {
+         // ScnRenderer::createPath receives the post-processing path mask in r4.
+         ctx->gpr[4] = RuntimeGameGraphicsOptions::FilterScnRendererPathMask(ctx->gpr[4]);
+@@ -780,6 +786,25 @@
+                  st.target, static_cast<unsigned long long>(st.call), st.lr, st.r3, st.r4, st.r5, st.f1, cpu->gpr[3],
+                  cpu->fpr[1].d, ctxWords[0], ctxWords[1], ctxWords[2], ctxWords[3], ctxWords[4], ctxWords[5],
+                  ctxWords[6], ctxWords[7], Bw2TracedIndirectDerefs(st.r3, st.r4, st.r5, cpu->gpr[3]).c_str());
++}
++
++inline void Bw2TraceStaticCall(uint32_t target, const CpuContext* cpu) {
++    static uint64_t calls = 0;
++    static const uint64_t traceEvery = [] {
++        const char* v = std::getenv("BW2_TRACE_INDIRECT_EVERY");
++        const uint64_t n = v != nullptr ? std::strtoull(v, nullptr, 10) : 500ull;
++        return n == 0 ? 1ull : n;
++    }();
++    static const uint32_t onlyR3 = [] {
++        const char* v = std::getenv("BW2_TRACE_INDIRECT_R3");
++        return v != nullptr ? static_cast<uint32_t>(std::strtoul(v, nullptr, 16)) : 0u;
++    }();
++    if (onlyR3 != 0 && cpu->gpr[3] != onlyR3) return;
++    ++calls;
++    if ((calls % traceEvery) != 0) return;
++    std::fprintf(stderr, "[static] 0x%08X #%llu r3=0x%08X r4=0x%08X r5=0x%08X r6=0x%08X f1=%g%s\n", target,
++                 static_cast<unsigned long long>(calls), cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[6],
++                 cpu->fpr[1].d, Bw2TracedIndirectDerefs(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], 0u).c_str());
+ }
+ 
+ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
