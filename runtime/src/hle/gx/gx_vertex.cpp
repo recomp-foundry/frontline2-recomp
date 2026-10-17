@@ -110,6 +110,16 @@ PPC_NATIVE_OVERRIDE_VOID(8016dba4, GX__GetVtxDescv_8016dba4, (uint32_t la), (la)
 
 extern "C" void GX__SetVtxAttrFmt_8016dc68(uint32_t vf, uint32_t a, uint32_t c, uint32_t t, uint32_t fr) {
     const uint32_t attr = CanonicalVtxAttr(a);
+    // BW2_TRACE_VAT=<fmt>: log every call for that vertex format with the caller's LR.
+    static const long traceFmt = [] {
+        const char* v = std::getenv("BW2_TRACE_VAT");
+        return v != nullptr ? std::strtol(v, nullptr, 10) : -1L;
+    }();
+    if (traceFmt >= 0 && vf == static_cast<uint32_t>(traceFmt)) {
+        const CpuContext* cpu = TryGetCpuContext();
+        std::fprintf(stderr, "[vat] fmt=%u attr=%u cnt=%u type=%u frac=%u LR=0x%08X\n", vf, a, c, t, fr,
+                     cpu != nullptr ? cpu->lr : 0u);
+    }
     if(vf<8&&attr<26){
         const VtxAttrFmt oldFmt = g_hleGxState.vtxAttrFmt[vf][attr];
         g_hleGxState.vtxAttrFmt[vf][attr].cnt=(GXCompCnt)c;
@@ -135,7 +145,11 @@ extern "C" void GX__SetVtxAttrFmtv_8016de08(uint32_t vf, uint32_t la) {
     while(true){
         uint32_t a=Memory::Read32(p);
         if(a==0xFFu) break;
-        GX__SetVtxAttrFmt_8016dc68(vf, a, Memory::Read32(p+4), Memory::Read32(p+8), Memory::Read32(p+12)&0xFFu);
+        // GXVtxAttrFmtList::frac is a u8 at +12 (GXGetVtxAttrFmtv above writes it as one);
+        // reading the word's low byte took stack garbage instead. BW2 saves and restores
+        // vertex format 7 around its HUD every frame, so its terrain lost its texcoord
+        // fraction (12 -> 0) and rendered in one flat colour per patch.
+        GX__SetVtxAttrFmt_8016dc68(vf, a, Memory::Read32(p+4), Memory::Read32(p+8), Memory::Read8(p+12));
         p+=16;
     }
 }

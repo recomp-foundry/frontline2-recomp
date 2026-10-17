@@ -272,6 +272,63 @@ static void trace_draw(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertices, u3
       tex += fmt::format(" arr={}/{}/{}{}", arr.data, arr.size, arr.stride, arr.cachedRange.size ? "" : " up");
     }
   }
+  // Texgens (src/type/mtx/postmtx; the texmtx's first row for position-sourced ones) and
+  // the first texture's mip/filter/bias: a mesh that renders in one flat colour is usually
+  // sampling its smallest mip because its texcoords are scaled wrong.
+  for (u32 i = 0; i < st.numTexGens && i < 8; ++i) {
+    const auto& tg = st.tcgs[i];
+    tex += fmt::format(" tg{}:s{}t{}m{}p{}{}", i, static_cast<int>(tg.src), static_cast<int>(tg.type),
+                       static_cast<int>(tg.mtx), static_cast<int>(tg.postMtx), tg.normalize ? "n" : "");
+    if (tg.mtx != GX_IDENTITY) {
+      const u32 mi = (static_cast<u32>(tg.mtx) - static_cast<u32>(GX_TEXMTX0)) / 3u;
+      if (mi < MaxTexMtx) {
+        const auto& m = st.texMtxs[mi];
+        tex += fmt::format("[{:.3g},{:.3g},{:.3g},{:.3g}]", m.m0[0], m.m0[1], m.m0[2], m.m0[3]);
+      }
+    }
+  }
+  for (u32 i = 0; i < st.numTexGens && i < 8; ++i) {
+    const auto& sc = st.texCoordScales[i];
+    if (sc.scaleS != 0 || sc.scaleT != 0 || sc.biasS || sc.biasT) {
+      tex += fmt::format(" su{}:{}x{}{}{}", i, sc.scaleS + 1u, sc.scaleT + 1u, sc.biasS ? "bS" : "", sc.biasT ? "bT" : "");
+    }
+  }
+  if (st.numTevStages > 0 && st.tevStages[0].texMapId != GX_TEXMAP_NULL) {
+    const auto& obj = st.loadedTextures[static_cast<u32>(st.tevStages[0].texMapId) & 7u];
+    tex += fmt::format(" t0:mip{}/{} f{}/{} lod{:.1f}..{:.1f} b{:.2f}", obj.has_mips() ? 1 : 0, obj.mip_count(),
+                       static_cast<int>(obj.min_filter()), static_cast<int>(obj.mag_filter()), obj.min_lod(),
+                       obj.max_lod(), obj.lod_bias());
+  }
+  // Range of the TEX0 coordinates of the first 64 vertices.
+  if (st.vtxDesc[GX_VA_TEX0] != GX_NONE) {
+    const auto& ta = vf.attrs[GX_VA_TEX0];
+    const u32 off = vertex_attr_offset(fmt, GX_VA_TEX0);
+    const u32 comps = ta.cnt == GX_TEX_ST ? 2u : 1u;
+    const u32 compSize = comp_type_size(GX_VA_TEX0, ta.type);
+    const u8 frac = ta.type == GX_F32 ? 0 : ta.frac;
+    const auto& arr = st.arrays[GX_VA_TEX0];
+    float mn[2] = {1e30f, 1e30f}, mx[2] = {-1e30f, -1e30f};
+    u32 counted = 0;
+    for (u32 v = 0; v < std::min<u32>(vtxCount, 64); ++v) {
+      const u8* p = vertices + v * vtxSize + off;
+      const u8* e = p;
+      if (st.vtxDesc[GX_VA_TEX0] != GX_DIRECT) {
+        const u32 idx = st.vtxDesc[GX_VA_TEX0] == GX_INDEX8 ? p[0] : ((p[0] << 8) | p[1]);
+        if (arr.data == nullptr || arr.stride == 0 || (idx + 1u) * arr.stride > arr.size) continue;
+        e = static_cast<const u8*>(arr.data) + idx * arr.stride;
+      }
+      for (u32 c = 0; c < comps; ++c) {
+        const float t = read_component(e + c * compSize, ta.type, frac);
+        mn[c] = std::min(mn[c], t);
+        mx[c] = std::max(mx[c], t);
+      }
+      ++counted;
+    }
+    if (counted > 0) {
+      tex += fmt::format(" tc0=({:.3g},{:.3g})..({:.3g},{:.3g})", mn[0], comps > 1 ? mn[1] : 0.f, mx[0],
+                         comps > 1 ? mx[1] : 0.f);
+    }
+  }
   // Max index read per indexed attribute vs. the elements the array holds.
   const u32 n = std::min<u32>(vtxCount, 4096);
   for (int a : {GX_VA_POS, GX_VA_NRM, GX_VA_TEX0}) {
@@ -1980,6 +2037,17 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
     if (addr >= 0x70 && addr <= 0x77) {
       u32 fmt = addr - 0x70;
       auto& vf = g_gxState.vtxFmts[fmt];
+      // AURORA_TRACE_VAT=<fmt>: log every CP write of that format's VAT_A (the game's API
+      // calls arrive here too, flushed from __gx when the VAT is dirty).
+      static const long traceVatFmt = [] {
+        const char* v = std::getenv("AURORA_TRACE_VAT");
+        return v != nullptr ? std::strtol(v, nullptr, 10) : -1L;
+      }();
+      if (static_cast<long>(fmt) == traceVatFmt) {
+        Log.warn("[vat] f{} cp VAT_A fmt={} value=0x{:08X} pos:t{}f{} tex0:c{}t{}f{} inDL={}", gfx::current_frame(),
+                 fmt, value, bp_get(value, 3, 1), bp_get(value, 5, 4), bp_get(value, 1, 21), bp_get(value, 3, 22),
+                 bp_get(value, 5, 25), fifo::in_display_list() ? 1 : 0);
+      }
       vf.attrs[GX_VA_POS].cnt = static_cast<GXCompCnt>(bp_get(value, 1, 0));
       vf.attrs[GX_VA_POS].type = static_cast<GXCompType>(bp_get(value, 3, 1));
       vf.attrs[GX_VA_POS].frac = static_cast<u8>(bp_get(value, 5, 4));

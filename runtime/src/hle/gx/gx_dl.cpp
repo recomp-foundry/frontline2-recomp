@@ -426,6 +426,10 @@ struct DlCpWrite {
 // (the title's globe) and switch arrays between meshes.
 struct DlArrayRange {
     uint8_t attr = 0;
+    // The list did not set this array itself: base/stride are the ones in effect when the
+    // list is called (GXSetArray between calls; BW2 draws every terrain patch with one list),
+    // and the values below are only the ones seen at scan time.
+    bool fromEntry = false;
     uint32_t base = 0;
     uint32_t stride = 0;
     uint32_t elemSize = 0;
@@ -942,6 +946,8 @@ struct DlIndexScanVisitor {
     bool* outHasCpWrites;
     std::vector<DlCpWrite>* outCpWrites;
     std::vector<DlArrayRange>* outRanges;
+    // Arrays whose base or stride the list itself wrote so far (shared with nested walks).
+    std::array<bool, GX_VA_MAX_ATTR>* arraysWrittenInList;
     // Every walk - including each nested one - gets its own layout generation, so
     // a cached layout can only be reused inside the walk that built it.
     uint32_t layoutVersion = 1;
@@ -956,6 +962,10 @@ struct DlIndexScanVisitor {
     bool OnCpReg(const uint8_t*, uint8_t reg, uint32_t value) {
         if (outHasCpWrites) *outHasCpWrites = true;
         if (reg >= 0xA0 && reg <= 0xBF && outHasArrayStateWrites) *outHasArrayStateWrites = true;
+        if (reg >= 0xA0 && reg <= 0xBF && arraysWrittenInList != nullptr) {
+            const int attr = static_cast<int>(reg & 0x0Fu) + GX_VA_POS;
+            if (attr >= 0 && attr < GX_VA_MAX_ATTR) (*arraysWrittenInList)[attr] = true;
+        }
         if (outCpWrites != nullptr) outCpWrites->push_back(DlCpWrite{reg, value});
         ApplyCpRegWrite(reg, value);
         if (reg == 0x50 || reg == 0x60 || (reg >= 0x70 && reg <= 0x97)) ++layoutVersion;
@@ -975,19 +985,24 @@ struct DlIndexScanVisitor {
         }
         return true;
     }
+    bool ArrayFromEntry(int attr) const {
+        return arraysWrittenInList == nullptr || !(*arraysWrittenInList)[attr];
+    }
     // False only when the list reads more distinct arrays than the table holds; the
     // caller then falls back to the interpreter, which sets arrays per draw.
     bool RecordArrayRange(int attr, uint32_t base, uint32_t stride, uint32_t elemSize, uint32_t maxIndex) {
         if (outRanges == nullptr) return true;
+        const bool fromEntry = ArrayFromEntry(attr);
         for (auto& range : *outRanges) {
-            if (range.attr == attr && range.base == base && range.stride == stride) {
-                if (maxIndex > range.maxIdx) range.maxIdx = maxIndex;
-                if (elemSize > range.elemSize) range.elemSize = elemSize;
-                return true;
-            }
+            if (range.attr != attr || range.fromEntry != fromEntry) continue;
+            if (!fromEntry && (range.base != base || range.stride != stride)) continue;
+            if (maxIndex > range.maxIdx) range.maxIdx = maxIndex;
+            if (elemSize > range.elemSize) range.elemSize = elemSize;
+            return true;
         }
         if (outRanges->size() >= kDlMaxArrayRanges) return false;
-        outRanges->push_back(DlArrayRange{static_cast<uint8_t>(attr), base, stride, elemSize, maxIndex});
+        outRanges->push_back(
+            DlArrayRange{static_cast<uint8_t>(attr), fromEntry, base, stride, elemSize, maxIndex});
         return true;
     }
     bool OnCallDisplayList(uint32_t addr, uint32_t size, int depth) {
@@ -999,7 +1014,8 @@ struct DlIndexScanVisitor {
                 DlIndexScanVisitor child{maxIdx,         sawIdx,         maxXfIdx,
                                          maxXfBytes,     sawXfIdx,       outFmt,
                                          outFmtMixed,    outHasNestedDl, outHasArrayStateWrites,
-                                         outHasCpWrites, outCpWrites,    outRanges};
+                                         outHasCpWrites, outCpWrites,    outRanges,
+                                         arraysWrittenInList};
                 if (!WalkDisplayList(nested, size, child, depth + 1)) return false;
             }
             ++layoutVersion;
@@ -1057,10 +1073,12 @@ static bool ScanDisplayListMaxIndices(const uint8_t* data, uint32_t nbytes,
                                       bool* outHasArrayStateWrites, bool* outHasCpWrites,
                                       std::vector<DlCpWrite>* outCpWrites,
                                       std::vector<DlArrayRange>* outRanges) {
+    std::array<bool, GX_VA_MAX_ATTR> arraysWrittenInList{};
     DlIndexScanVisitor visitor{maxIdx,         sawIdx,         maxXfIdx,
                                maxXfBytes,     sawXfIdx,       outFmt,
                                outFmtMixed,    outHasNestedDl, outHasArrayStateWrites,
-                               outHasCpWrites, outCpWrites,    outRanges};
+                               outHasCpWrites, outCpWrites,    outRanges,
+                               &arraysWrittenInList};
     return WalkDisplayList(data, nbytes, visitor, 0);
 }
 
@@ -1310,32 +1328,35 @@ static bool ApplyAuroraArraysForDisplayList(const std::vector<DlArrayRange>& ran
     for (const auto& range : ranges) {
         const int attr = range.attr;
         if (attr >= GX_VA_MAX_ATTR) { ok = false; continue; }
-        if (range.base == 0 || range.stride == 0 || range.elemSize == 0) { ok = false; continue; }
+        // A list that does not set an array reads the one in effect when it is called.
+        const uint32_t base = range.fromEntry ? g_hleGxState.vtxArray[attr].base : range.base;
+        const uint32_t stride = range.fromEntry ? g_hleGxState.vtxArray[attr].stride : range.stride;
+        if (base == 0 || stride == 0 || range.elemSize == 0) { ok = false; continue; }
         const uint32_t count = range.maxIdx + 1u;
-        const uint32_t span = static_cast<uint32_t>((count - 1u) * range.stride) + range.elemSize;
-        if (!Memory::Contains(range.base, span)) {
+        const uint32_t span = static_cast<uint32_t>((count - 1u) * stride) + range.elemSize;
+        if (!Memory::Contains(base, span)) {
             ok = false;
             continue;
         }
-        const uint8_t* hostPtr = static_cast<const uint8_t*>(GuestToHostPtr(range.base, span));
+        const uint8_t* hostPtr = static_cast<const uint8_t*>(GuestToHostPtr(base, span));
         if (!hostPtr) {
             ok = false;
             continue;
         }
-        Bw2AddDisplayListArraySpan(range.base, span);
+        Bw2AddDisplayListArraySpan(base, span);
         if (published[attr]) continue;
         published[attr] = true;
         const GXAttr gxAttr = static_cast<GXAttr>(attr);
         // Aurora's storage-fetch shaders consume guest big-endian bytes directly
         // and honor the array stride. Keep the backing pointer stable so per-frame
         // storage uploads can be cached instead of repacking every display-list call.
-        if (range.stride <= 0xffu) {
-            ApplyAuroraArrayIfChanged(gxAttr, hostPtr, span, static_cast<uint8_t>(range.stride));
+        if (stride <= 0xffu) {
+            ApplyAuroraArrayIfChanged(gxAttr, hostPtr, span, static_cast<uint8_t>(stride));
             continue;
         }
         if (attr < GX_VA_POS || attr > GX_VA_TEX7) { ok = false; continue; }
         auto& packed = s_packedArrays[attr][++s_packedArrayCursor[attr] & 1u];
-        if (!PackIndexedAttrData(hostPtr, range.stride, count, range.elemSize, packed)) {
+        if (!PackIndexedAttrData(hostPtr, stride, count, range.elemSize, packed)) {
             ok = false;
             continue;
         }
@@ -1456,7 +1477,9 @@ static void TraceDisplayListCall(uint32_t listAddr, uint32_t nbytes, const char*
         size_t shown = 0;
         for (const auto& r : *ranges) {
             if (shown++ >= 12) { append(" ..."); break; }
-            append(" a%u:%08X/%u/%u/%u", r.attr, r.base, r.stride, r.elemSize, r.maxIdx);
+            const uint32_t base = r.fromEntry ? g_hleGxState.vtxArray[r.attr].base : r.base;
+            const uint32_t stride = r.fromEntry ? g_hleGxState.vtxArray[r.attr].stride : r.stride;
+            append(" a%u:%08X/%u/%u/%u%s", r.attr, base, stride, r.elemSize, r.maxIdx, r.fromEntry ? "*" : "");
         }
     }
     Bw2DlTraceLine("list %08X+%u %s%s scan=%d nested=%d mixed=%d cp=%d arrw=%d arrays=%d xf=%d fmt=%d "
