@@ -462,6 +462,44 @@ public sealed partial class CxxLinearCodeGenerator
                                 }
                                 break;
                             }
+                        // The resolved-range forms are the same loads after the guest-memory
+                        // range pass: a scalar lfs/lfd reload leaves the register scalar and a
+                        // psq_l leaves it paired. Without these cases a register paired earlier
+                        // (psq_l) and reloaded with lfs stayed "paired" at the next block's entry,
+                        // and scalar consumers there read its double as a packed pair (BW2's
+                        // world-to-screen projection returned one constant point).
+                        case IrResolvedLoad resolvedLoad:
+                            {
+                                var destBit = PairedFloatRegisterBit(resolvedLoad.Destination);
+                                if (destBit >= 0)
+                                {
+                                    newOut &= ~(1u << destBit);
+                                }
+                                break;
+                            }
+                        case IrResolvedLoadPair resolvedPair:
+                            {
+                                var firstBit = PairedFloatRegisterBit(resolvedPair.FirstDestination);
+                                if (firstBit >= 0)
+                                {
+                                    newOut &= ~(1u << firstBit);
+                                }
+                                var secondBit = PairedFloatRegisterBit(resolvedPair.SecondDestination);
+                                if (secondBit >= 0)
+                                {
+                                    newOut &= ~(1u << secondBit);
+                                }
+                                break;
+                            }
+                        case IrResolvedPsqLoad resolvedPsq:
+                            {
+                                var destBit = PairedFloatRegisterBit(resolvedPsq.Destination);
+                                if (destBit >= 0)
+                                {
+                                    newOut |= 1u << destBit;
+                                }
+                                break;
+                            }
                     }
                 }
 

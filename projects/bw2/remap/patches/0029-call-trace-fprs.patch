@@ -1,0 +1,33 @@
+diff -ruN a/runtime/include/abi_bridge.h b/runtime/include/abi_bridge.h
+--- a/runtime/include/abi_bridge.h	2026-10-17 17:33:10
++++ b/runtime/include/abi_bridge.h	2026-10-17 17:33:10
+@@ -11,6 +11,7 @@
+ #include <cstdint>
+ #include <cstdio>
+ #include <cstdlib>
++#include <cstring>
+ #include <vector>
+ #include <string>
+ #include <iostream>
+@@ -825,9 +826,19 @@
+     }();
+     ++calls;
+     if ((calls % traceEvery) != 0) return;
+-    std::fprintf(stderr, "[static-ret] 0x%08X #%llu r3=0x%08X r4=0x%08X r5=0x%08X f1=%g%s\n", target,
++    // f0..f7 as the raw 64-bit pattern: a paired-single register holds ps0 in the high
++    // 32 bits and ps1 in the low 32 (union PPC_FPR), a scalar one an IEEE double.
++    char fprs[8 * 20];
++    int n = 0;
++    for (int i = 0; i < 8; ++i) {
++        uint64_t bits;
++        std::memcpy(&bits, &cpu->fpr[i].d, sizeof(bits));
++        n += std::snprintf(fprs + n, sizeof(fprs) - static_cast<size_t>(n), " f%d=%016llX", i,
++                           static_cast<unsigned long long>(bits));
++    }
++    std::fprintf(stderr, "[static-ret] 0x%08X #%llu r3=0x%08X r4=0x%08X r5=0x%08X f1=%g%s%s\n", target,
+                  static_cast<unsigned long long>(calls), cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->fpr[1].d,
+-                 Bw2TracedIndirectDerefs(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[3]).c_str());
++                 fprs, Bw2TracedIndirectDerefs(cpu->gpr[3], cpu->gpr[4], cpu->gpr[5], cpu->gpr[3]).c_str());
+ }
+ 
+ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
