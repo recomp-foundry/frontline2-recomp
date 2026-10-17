@@ -1,0 +1,161 @@
+diff -ruN a/runtime/include/abi_bridge.h b/runtime/include/abi_bridge.h
+--- a/runtime/include/abi_bridge.h	2026-10-17 14:40:25
++++ b/runtime/include/abi_bridge.h	2026-10-17 14:40:25
+@@ -542,8 +542,20 @@
+     return active;
+ }
+ 
++// State of one traced call (BW2_TRACE_INDIRECT); filled by Bw2TraceCallBegin below.
++struct Bw2TraceCallState {
++    bool traced = false;
++    uint32_t target = 0;
++    uint64_t call = 0;
++    uint32_t r3 = 0, r4 = 0, r5 = 0;
++    double f1 = 0.0;
++};
++inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cpu);
++inline void Bw2TraceCallEnd(const Bw2TraceCallState& st, const CpuContext* cpu);
++inline bool Bw2IsTracedIndirectTarget(uint32_t target);
++
+ template <uint32_t Target>
+-inline void InvokeDirectCpu(CpuContext* ctx) {
++inline void InvokeDirectCpuImpl(CpuContext* ctx) {
+     static_assert(Target != 0, "InvokeDirectCpu cannot target address 0");
+     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
+     ApplyRuntimeCallOptions(Target, cpu);
+@@ -590,6 +602,18 @@
+     ReportMissingCpuTarget(Target, cpu);
+ }
+ 
++template <uint32_t Target>
++inline void InvokeDirectCpu(CpuContext* ctx) {
++    CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
++    if (!Bw2IsTracedIndirectTarget(Target)) {
++        InvokeDirectCpuImpl<Target>(cpu);
++        return;
++    }
++    const Bw2TraceCallState trace = Bw2TraceCallBegin(Target, cpu);
++    InvokeDirectCpuImpl<Target>(cpu);
++    Bw2TraceCallEnd(trace, cpu);
++}
++
+ // Indirect jump (bctr without link) - used for switch tables.
+ inline void InvokeIndirectJump(uint32_t target, CpuContext* ctx) {
+     // Use the caller's context, not the persistent global context!
+@@ -666,7 +690,7 @@
+ 
+ // A chain starting with "r3" follows the offsets from r3 instead of r4; "ret" from the r3
+ // the call returned.
+-inline std::string Bw2TracedIndirectDerefs(uint32_t r3, uint32_t r4, uint32_t ret) {
++inline std::string Bw2TracedIndirectDerefs(uint32_t r3, uint32_t r4, uint32_t r5, uint32_t ret) {
+     static const std::vector<std::vector<uint32_t>> chains = [] {
+         std::vector<std::vector<uint32_t>> out;
+         if (const char* v = std::getenv("BW2_TRACE_INDIRECT_DEREF")) {
+@@ -674,6 +698,7 @@
+             for (const char* p = v; ; ++p) {
+                 if (*p == 'r' && p[1] == '3') { chain.push_back(0xFFFFFFFFu); p += 1; continue; }
+                 if (*p == 'r' && p[1] == 'e' && p[2] == 't') { chain.push_back(0xFFFFFFFEu); p += 2; continue; }
++                if (*p == 'r' && p[1] == '5') { chain.push_back(0xFFFFFFFDu); p += 1; continue; }
+                 if (*p == ':' || *p == ',' || *p == 0) {
+                     if (*p == ',' || *p == 0) {
+                         if (!chain.empty()) out.push_back(chain);
+@@ -697,6 +722,7 @@
+         for (uint32_t off : chain) {
+             if (off == 0xFFFFFFFFu) { addr = r3; continue; }
+             if (off == 0xFFFFFFFEu) { addr = ret; continue; }
++            if (off == 0xFFFFFFFDu) { addr = r5; continue; }
+             const uint32_t at = addr + off;
+             if (!Memory::Contains(at, 4u)) { ok = false; break; }
+             addr = Memory::Read32(at);
+@@ -708,28 +734,24 @@
+     return text;
+ }
+ 
+-inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
+-    CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
+-    if (target == 0) {
+-        ReportMissingCpuTarget(target, cpu);
+-    }
+-    ApplyRuntimeCallOptions(target, cpu);
+-    const bool traced = target != 0 && Bw2IsTracedIndirectTarget(target);
+-    uint32_t tracedR3 = 0, tracedR4 = 0;
+-    uint64_t tracedCall = 0;
+-    double tracedF1 = 0.0;
+-    if (traced) {
+-        static uint64_t calls = 0;
+-        tracedCall = ++calls;
+-        tracedR3 = cpu->gpr[3];
+-        tracedR4 = cpu->gpr[4];
+-        tracedF1 = cpu->fpr[1].d;
+-    }
+-    bool dispatched = TryDispatchRawCpuTarget(TranslatedFunctionRegistry::FindRawByAddressPtr(target), cpu);
+-    if (!dispatched) {
+-        dispatched = TryDispatchResolvedCpuTarget(TranslatedFunctionRegistry::FindByAddressPtr(target), cpu);
+-    }
+-    // BW2_TRACE_INDIRECT_FIRST / _EVERY: how many first calls to log and then one in how many.
++
++// Call trace shared by InvokeIndirectCpu and InvokeDirectCpu (see BW2_TRACE_INDIRECT).
++inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cpu) {
++    Bw2TraceCallState st;
++    if (target == 0 || !Bw2IsTracedIndirectTarget(target)) return st;
++    static uint64_t calls = 0;
++    st.traced = true;
++    st.target = target;
++    st.call = ++calls;
++    st.r3 = cpu->gpr[3];
++    st.r4 = cpu->gpr[4];
++    st.r5 = cpu->gpr[5];
++    st.f1 = cpu->fpr[1].d;
++    return st;
++}
++
++inline void Bw2TraceCallEnd(const Bw2TraceCallState& st, const CpuContext* cpu) {
++    if (!st.traced) return;
+     static const uint64_t traceFirst = [] {
+         const char* v = std::getenv("BW2_TRACE_INDIRECT_FIRST");
+         return v != nullptr ? std::strtoull(v, nullptr, 10) : 40ull;
+@@ -739,20 +761,31 @@
+         const uint64_t n = v != nullptr ? std::strtoull(v, nullptr, 10) : 500ull;
+         return n == 0 ? 1ull : n;
+     }();
+-    if (traced && dispatched && (tracedCall <= traceFirst || (tracedCall % traceEvery) == 0)) {
+-        // Also the first 32 bytes behind r4 after the call (a context the callee may fill)
+-        // and the incoming f1, for callbacks that score objects.
+-        uint32_t ctxWords[8] = {};
+-        for (uint32_t i = 0; i < 8; ++i) {
+-            ctxWords[i] = Memory::Contains(tracedR4 + i * 4u, 4u) ? Memory::Read32(tracedR4 + i * 4u) : 0u;
+-        }
+-        std::fprintf(stderr,
+-                     "[indirect] 0x%08X #%llu r3=0x%08X r4=0x%08X f1=%g -> r3=0x%08X f1=%g r4[0..7]=%08X %08X %08X %08X "
+-                     "%08X %08X %08X %08X%s\n",
+-                     target, static_cast<unsigned long long>(tracedCall), tracedR3, tracedR4, tracedF1, cpu->gpr[3],
+-                     cpu->fpr[1].d, ctxWords[0], ctxWords[1], ctxWords[2], ctxWords[3], ctxWords[4], ctxWords[5],
+-                     ctxWords[6], ctxWords[7], Bw2TracedIndirectDerefs(tracedR3, tracedR4, cpu->gpr[3]).c_str());
++    if (!(st.call <= traceFirst || (st.call % traceEvery) == 0)) return;
++    uint32_t ctxWords[8] = {};
++    for (uint32_t i = 0; i < 8; ++i) {
++        ctxWords[i] = Memory::Contains(st.r4 + i * 4u, 4u) ? Memory::Read32(st.r4 + i * 4u) : 0u;
+     }
++    std::fprintf(stderr,
++                 "[indirect] 0x%08X #%llu r3=0x%08X r4=0x%08X r5=0x%08X f1=%g -> r3=0x%08X f1=%g r4[0..7]=%08X %08X "
++                 "%08X %08X %08X %08X %08X %08X%s\n",
++                 st.target, static_cast<unsigned long long>(st.call), st.r3, st.r4, st.r5, st.f1, cpu->gpr[3],
++                 cpu->fpr[1].d, ctxWords[0], ctxWords[1], ctxWords[2], ctxWords[3], ctxWords[4], ctxWords[5],
++                 ctxWords[6], ctxWords[7], Bw2TracedIndirectDerefs(st.r3, st.r4, st.r5, cpu->gpr[3]).c_str());
++}
++
++inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
++    CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
++    if (target == 0) {
++        ReportMissingCpuTarget(target, cpu);
++    }
++    ApplyRuntimeCallOptions(target, cpu);
++    Bw2TraceCallState trace = Bw2TraceCallBegin(target, cpu);
++    bool dispatched = TryDispatchRawCpuTarget(TranslatedFunctionRegistry::FindRawByAddressPtr(target), cpu);
++    if (!dispatched) {
++        dispatched = TryDispatchResolvedCpuTarget(TranslatedFunctionRegistry::FindByAddressPtr(target), cpu);
++    }
++    if (dispatched) Bw2TraceCallEnd(trace, cpu);
+     if (dispatched) {
+         return;
+     }
