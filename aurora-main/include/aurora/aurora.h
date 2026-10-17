@@ -168,6 +168,9 @@ typedef const void* (*AuroraArrayBaseResolver)(uint32_t cpValue, uint32_t* outSi
 void aurora_set_array_base_resolver(AuroraArrayBaseResolver resolver);
 // Draws decoded so far in the frame being recorded (the "#N" of AURORA_DRAW_TRACE_FRAME).
 uint32_t aurora_draw_index(void);
+// Screen position (NDC) of the billboard AURORA_TRACK_BILLBOARD=WxH,fmt selects; returns frames
+// since it was last drawn (UINT32_MAX: never).
+uint32_t aurora_tracked_billboard(float* x, float* y);
 bool aurora_flush_efb_copies_to_ram();
 bool aurora_flush_efb_copy_to_ram(void* dest);
 

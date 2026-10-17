@@ -130,6 +130,69 @@ static float read_component(const u8* p, GXCompType type, u8 frac) noexcept {
   }
 }
 
+// AURORA_TRACK_BILLBOARD=WxH,fmt: remembers where the latest 4-vertex draw sampling a texture of
+// that size and format lands on screen (NDC of its first vertex through the current PN matrix
+// and projection). BW2's objective star is such a billboard; the autoplay script steers by it.
+struct TrackedBillboard {
+  u32 width = 0, height = 0, format = 0;
+  bool enabled = false;
+  float x = 0.f, y = 0.f;
+  u32 frame = 0;
+  bool seen = false;
+};
+static TrackedBillboard s_trackedBillboard = [] {
+  TrackedBillboard t;
+  if (const char* v = std::getenv("AURORA_TRACK_BILLBOARD")) {
+    unsigned w = 0, h = 0, f = 0;
+    if (std::sscanf(v, "%ux%u,%u", &w, &h, &f) == 3) {
+      t.width = w; t.height = h; t.format = f; t.enabled = true;
+    }
+  }
+  return t;
+}();
+
+static void track_billboard(u8 cmd, u16 vtxCount, u32 vtxSize, const u8* vertices) {
+  auto& t = s_trackedBillboard;
+  if (!t.enabled || vtxCount != 4) return;
+  const auto& st = g_gxState;
+  if (st.numTevStages == 0 || st.tevStages[0].texMapId == GX_TEXMAP_NULL) return;
+  const auto& obj = st.loadedTextures[static_cast<u32>(st.tevStages[0].texMapId) & 7u];
+  if (obj.width() != t.width || obj.height() != t.height || static_cast<u32>(obj.format()) != t.format) return;
+  if (st.vtxDesc[GX_VA_POS] == GX_NONE) return;
+  const GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & 7u);
+  const auto& pa = st.vtxFmts[fmt].attrs[GX_VA_POS];
+  const u32 posOff = vertex_attr_offset(fmt, GX_VA_POS);
+  const u32 comps = pa.cnt == GX_POS_XY ? 2u : 3u;
+  const u32 compSize = comp_type_size(GX_VA_POS, pa.type);
+  const u8 frac = pa.type == GX_F32 ? 0 : pa.frac;
+  const u8* e = nullptr;
+  if (st.vtxDesc[GX_VA_POS] == GX_DIRECT) {
+    e = vertices + posOff;
+  } else {
+    const auto& arr = st.arrays[GX_VA_POS];
+    const u8* p = vertices + posOff;
+    const u32 idx = st.vtxDesc[GX_VA_POS] == GX_INDEX8 ? p[0] : ((p[0] << 8) | p[1]);
+    if (arr.data == nullptr || arr.stride == 0 || (idx + 1u) * arr.stride > arr.size) return;
+    e = static_cast<const u8*>(arr.data) + idx * arr.stride;
+  }
+  float pos[3] = {0.f, 0.f, 0.f};
+  for (u32 c = 0; c < comps; ++c) pos[c] = read_component(e + c * compSize, pa.type, frac);
+  const u32 m = st.vtxDesc[GX_VA_PNMTXIDX] == GX_DIRECT ? vertices[0] / 3u : st.currentPnMtx;
+  if (m >= MaxPnMtx) return;
+  const auto& M = st.pnMtx[m].pos;
+  const float mv[3] = {M.m0[0] * pos[0] + M.m0[1] * pos[1] + M.m0[2] * pos[2] + M.m0[3],
+                       M.m1[0] * pos[0] + M.m1[1] * pos[1] + M.m1[2] * pos[2] + M.m1[3],
+                       M.m2[0] * pos[0] + M.m2[1] * pos[1] + M.m2[2] * pos[2] + M.m2[3]};
+  const auto& P = st.proj;
+  float clip[4];
+  for (u32 r = 0; r < 4; ++r) clip[r] = P[r][0] * mv[0] + P[r][1] * mv[1] + P[r][2] * mv[2] + P[r][3];
+  if (!(clip[3] > 0.f) || !std::isfinite(clip[0]) || !std::isfinite(clip[1])) return;
+  t.x = clip[0] / clip[3];
+  t.y = clip[1] / clip[3];
+  t.frame = gfx::current_frame();
+  t.seen = true;
+}
+
 // Every draw of the traced frame: state, textures, vertex layout, arrays, and a CPU reference
 // transform of the first vertices (position -> current/per-vertex PN matrix -> projection) so a
 // draw that should be visible can be told apart from one whose inputs are already wrong.
@@ -2587,6 +2650,7 @@ static bool handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
   u32 totalVtxBytes = vtxCount * vtxSize;
   const u32 drawIndex = next_draw_index();
   trace_draw(cmd, vtxCount, vtxSize, data + pos, drawIndex);
+  track_billboard(cmd, vtxCount, vtxSize, data + pos);
   s_lastDraw.pos = pos - 3;
   s_lastDraw.size = size;
   s_lastDraw.cmd = cmd;
@@ -2946,3 +3010,13 @@ void aurora_set_array_base_resolver(AuroraArrayBaseResolver resolver) { aurora::
 // Draws decoded so far in the current frame (the trace's "#N"); the runtime's display-list
 // trace reads it to pair each list with the draws it produced.
 uint32_t aurora_draw_index(void) { return aurora::gx::fifo::s_drawIndex; }
+// Latest screen position (NDC) of the billboard AURORA_TRACK_BILLBOARD selects; returns the
+// frames elapsed since it was last drawn, or UINT32_MAX when it has never been seen.
+uint32_t aurora_tracked_billboard(float* x, float* y) {
+  const auto& t = aurora::gx::fifo::s_trackedBillboard;
+  if (!t.seen) return UINT32_MAX;
+  if (x) *x = t.x;
+  if (y) *y = t.y;
+  const uint32_t now = aurora::gfx::current_frame();
+  return now >= t.frame ? now - t.frame : 0u;
+}

@@ -11,7 +11,9 @@
 #include "bw2_hle.h"
 
 #include <SDL3/SDL.h>
+#include <aurora/aurora.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -111,6 +113,7 @@ struct AutoScript {
     float y = 0.0f;
     float stickX = 0.0f;  // "stick=x,y": Nunchuk stick held until the next stick= step
     float stickY = 0.0f;
+    bool stickAuto = false;
     uint32_t hold = 0;
 };
 
@@ -195,7 +198,10 @@ bool RunAutoScript() {
         } else if (verb == "point") {
             std::sscanf(arg.c_str(), "%f,%f", &s.x, &s.y);
         } else if (verb == "stick") {
-            std::sscanf(arg.c_str(), "%f,%f", &s.stickX, &s.stickY);
+            // "stick=auto": steer toward the tracked billboard (AURORA_TRACK_BILLBOARD, the
+            // objective star) each frame; turn in place while it is off screen.
+            s.stickAuto = arg == "auto";
+            if (!s.stickAuto) std::sscanf(arg.c_str(), "%f,%f", &s.stickX, &s.stickY);
         } else if (verb == "press") {
             // "press=AB": the named buttons for 0.25 s, then 0.5 s released.
             if (elapsed < 0.25) s.hold = ScriptButtons(arg);
@@ -279,8 +285,27 @@ bool Bw2KeyboardRemoteSample(unsigned int chan, WiiRemoteInput::KpadSample& samp
         g_pointer.x = Script().x + ((++frame & 1) ? 0.01f : -0.01f);
         g_pointer.y = Script().y;
         sample.hold |= Script().hold;
-        sample.stick[0] = Script().stickX;
-        sample.stick[1] = Script().stickY;
+        if (Script().stickAuto) {
+            float x = 0.0f, y = 0.0f;
+            const uint32_t age = aurora_tracked_billboard(&x, &y);
+            static int logCountdown = 0;
+            if (--logCountdown <= 0) {
+                logCountdown = 60;
+                std::fprintf(stderr, "[autostick] target x=%.2f y=%.2f age=%u\n", x, y, age);
+            }
+            if (age <= 30) {
+                // On screen: walk forward, veering toward it; the camera follows the player.
+                const float turn = std::max(-1.0f, std::min(1.0f, x * 2.0f));
+                sample.stick[0] = turn;
+                sample.stick[1] = std::fabs(x) > 0.6f ? 0.3f : 1.0f;
+            } else {
+                sample.stick[0] = -1.0f;  // off screen: turn until it shows up
+                sample.stick[1] = 0.15f;
+            }
+        } else {
+            sample.stick[0] = Script().stickX;
+            sample.stick[1] = Script().stickY;
+        }
         return true;
     }
     if (!g_pointer.valid && std::getenv("BW2_AUTOPRESS") != nullptr) {
