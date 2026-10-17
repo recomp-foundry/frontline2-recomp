@@ -145,6 +145,30 @@ bool SeenFile(const std::string& text) {
     return false;
 }
 
+// Button letters of a "press=" / "hold=" step: A B Z C 1 2 + - H(ome) and U D L R (D-pad).
+uint32_t ScriptButtons(const std::string& names) {
+    uint32_t buttons = 0;
+    for (const char c : names) {
+        switch (c) {
+        case 'A': buttons |= kWpadA; break;
+        case 'B': buttons |= kWpadB; break;
+        case 'Z': buttons |= kWpadZ; break;
+        case 'C': buttons |= kWpadC; break;
+        case '1': buttons |= kWpadOne; break;
+        case '2': buttons |= kWpadTwo; break;
+        case '+': buttons |= kWpadPlus; break;
+        case '-': buttons |= kWpadMinus; break;
+        case 'H': buttons |= kWpadHome; break;
+        case 'U': buttons |= kWpadUp; break;
+        case 'D': buttons |= kWpadDown; break;
+        case 'L': buttons |= kWpadLeft; break;
+        case 'R': buttons |= kWpadRight; break;
+        default: break;
+        }
+    }
+    return buttons;
+}
+
 // Advances the script; returns false once it has finished (or was never set).
 bool RunAutoScript() {
     AutoScript& s = Script();
@@ -173,10 +197,15 @@ bool RunAutoScript() {
         } else if (verb == "stick") {
             std::sscanf(arg.c_str(), "%f,%f", &s.stickX, &s.stickY);
         } else if (verb == "press") {
-            const uint32_t buttons = (arg.find('A') != std::string::npos ? kWpadA : 0u) |
-                                     (arg.find('B') != std::string::npos ? kWpadB : 0u);
-            if (elapsed < 0.25) s.hold = buttons;
+            // "press=AB": the named buttons for 0.25 s, then 0.5 s released.
+            if (elapsed < 0.25) s.hold = ScriptButtons(arg);
             done = elapsed >= 0.75;
+        } else if (verb == "hold") {
+            // "hold=ZB,3": the named buttons held for that many seconds.
+            const size_t comma = arg.find(',');
+            const double seconds = comma == std::string::npos ? 1.0 : std::atof(arg.c_str() + comma + 1);
+            if (elapsed < seconds) s.hold = ScriptButtons(arg.substr(0, comma));
+            done = elapsed >= seconds;
         }
         if (!done) return true;
         ++s.index;
