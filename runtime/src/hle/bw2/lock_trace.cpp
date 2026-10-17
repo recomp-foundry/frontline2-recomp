@@ -31,3 +31,22 @@ extern "C" void Bw2_SetTargetedObject_801002AC(uint32_t p) {
                  static_cast<unsigned long long>(calls), value, p, lr);
 }
 PPC_NATIVE_OVERRIDE_VOID(801002ac, Bw2_SetTargetedObject_801002AC, (uint32_t p), (p));
+
+// Getters on the lock branch of the player-control function (0x800FF848): the candidate
+// target the controller already holds (ctrl+132) and a byte flag (ctrl+6645). Pure loads,
+// logged with the controller address so BW2_WATCH can follow its fields.
+extern "C" uint32_t Bw2_GetLockCandidate_80100258(uint32_t ctrl) {
+    const uint32_t value = Memory::Read32(ctrl + 132u);
+    static const bool trace = std::getenv("BW2_TRACE_LOCK") != nullptr;
+    if (trace) {
+        static uint64_t calls = 0;
+        ++calls;
+        if (calls <= 50 || (calls % 300) == 0) {
+            std::fprintf(stderr, "[lock] candidate #%llu ctrl=0x%08X +24=%u +6645=%u candidate=0x%08X\n",
+                         static_cast<unsigned long long>(calls), ctrl, Memory::Read8(ctrl + 24u),
+                         Memory::Read8(ctrl + 6645u), value);
+        }
+    }
+    return value;
+}
+PPC_NATIVE_OVERRIDE(80100258, Bw2_GetLockCandidate_80100258, uint32_t, (uint32_t ctrl), (ctrl));
