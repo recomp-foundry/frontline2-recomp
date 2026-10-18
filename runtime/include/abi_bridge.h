@@ -685,7 +685,19 @@ inline void InvokeIndirectJump(uint32_t target, CpuContext* ctx) {
 // Several targets separated by commas are accepted. BW2_TRACE_INDIRECT_DEREF="a:b:c,..."
 // adds, per traced call, the words reached by following each offset chain from r4
 // (word at r4+a, then +b from it, then +c): vtable slots of the object a query returns.
+// BW2_TRACE_INDIRECT_FROM_FRAME=<n>: trace only once the GX frame counter reaches n, so a
+// full (EVERY=1) trace can be limited to the part of a scripted run that matters.
+extern "C" int g_gxFrameCount;
+inline bool Bw2TraceFrameWindowOpen() {
+    static const long fromFrame = [] {
+        const char* v = std::getenv("BW2_TRACE_INDIRECT_FROM_FRAME");
+        return v != nullptr ? std::strtol(v, nullptr, 10) : 0L;
+    }();
+    return fromFrame <= 0 || g_gxFrameCount >= fromFrame;
+}
+
 inline bool Bw2IsTracedIndirectTarget(uint32_t target) {
+    if (!Bw2TraceFrameWindowOpen()) return false;
     static const std::vector<uint32_t> targets = [] {
         std::vector<uint32_t> out;
         if (const char* v = std::getenv("BW2_TRACE_INDIRECT")) {
