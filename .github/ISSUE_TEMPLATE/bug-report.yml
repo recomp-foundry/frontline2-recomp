@@ -1,0 +1,70 @@
+name: Bug report
+description: Something crashes, looks, sounds or behaves differently from the Wii.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Logs live in `~/Library/Application Support/FrontlineRecomp/Logs/`; every run gets its own folder.
+        Attach the newest `console.log`. For visual problems, a screenshot or a short clip helps a lot.
+        Never attach game files (DOL, RELs, textures, audio, `generated/`): your own captures are fine.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you continue
+      options:
+        - label: I built from the current `main` (or name the commit below).
+          required: true
+        - label: I searched the existing issues.
+          required: true
+        - label: The problem does NOT also happen on Dolphin or a real Wii (if it does, it is the game's behavior).
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The version shown in the F10 overlay bar, or the output of `git rev-parse --short HEAD`.
+      placeholder: "0.1.0 / abc1234"
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: Machine and macOS version
+      placeholder: "MacBook Air M2, macOS 15.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: What kind of problem is it?
+      options:
+        - Crash or hang
+        - Graphics / visual glitch
+        - Audio
+        - Input (keyboard, mouse)
+        - Game logic (something plays differently from the Wii)
+        - Build or setup (build.sh)
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where in the game
+      description: Mission or menu, and what you were doing.
+      placeholder: "Mission 1, after taking the heavy tank, when aiming at the gunboats…"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens, and what should happen instead
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log and captures
+      description: Drag `console.log` and any screenshot here.

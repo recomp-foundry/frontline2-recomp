@@ -23,10 +23,12 @@ it marks is mission 1 of the campaign played to victory on macOS on
 
 ### Translation (PowerPC → C++)
 
-- 22 578 functions translated from `main.dol` with a reproducible function
-  map (`projects/bw2/tools/bw2_function_map.py`): 22 272 function starts
-  from `bl` targets, prologues, vtables and jump tables, SEL exports and
-  Dolphin SDK signatures; 0 unsupported instructions, 0 invalid SSA.
+- 23 897 functions translated from `main.dol` with a reproducible function
+  map (`projects/bw2/tools/bw2_function_map.py`): 23 499 function starts
+  from `bl` targets, prologues, vtables, jump and function tables, SEL
+  exports and Dolphin SDK signatures (1 793 named); 0 unsupported
+  instructions, 0 invalid SSA. The map is byte-identical when regenerated
+  from a clean clone.
 - Translator fixes on top of upstream WiiCompiled: stricter jump-table
   detection (Strikers), `#if 0` blocks hidden from native-marker scanning and
   warnings for branches outside the image (NSMB-Wii), function tables called
@@ -110,8 +112,10 @@ it marks is mission 1 of the campaign played to victory on macOS on
   built yet; `build-web/` is a probe.
 - Automated mission scripts became unreliable after D26 (the blind walk
   drifts into the canyon wall); manual play is the regression check.
-- `README.md` and `docs/building-macos.md` still describe upstream
-  WiiCompiled; `ORIGIN.md` describes this fork.
+- The build has only been exercised on the author's machine and on a clean
+  clone of this repository on the same machine; no CI yet. The upstream
+  `Launcher/` (installer and Wheel Wizard integration for Mario Kart Wii) is
+  kept as imported and is not used by this port.
 
 ## Versioning
 

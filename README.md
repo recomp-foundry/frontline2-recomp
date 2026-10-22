@@ -1,262 +1,215 @@
-<img width="4190" height="1232" alt="wiicomplogofinalfinalfinalev2MADEBY_INKWRECK_plzcredit" src="https://github.com/user-attachments/assets/df7a3f2e-5336-479a-b4c0-968dd578726d" />
+# Frontline 2 Recomp
 
-# WiiCompiled
+A native port of Battalion Wars 2 (Wii, 2007) made with static recompilation:
+the PowerPC code of the game's `main.dol` is translated to C++ ahead of time and
+linked with a runtime that stands in for the Wii hardware and SDK. There is no
+emulator, no interpreter and no JIT; nothing executes PowerPC at runtime.
 
-<p align="center">
-  <a href="https://github.com/patchzyy/Wiicompiled/releases"><img alt="Windows 10 / 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-0078D4"></a>
-  <a href="https://github.com/patchzyy/Wiicompiled/releases"><img alt="Linux, x64 / ARM64" src="https://img.shields.io/badge/Linux-x64%20%2F%20ARM64-FCC624?logo=linux&amp;logoColor=white"></a>
-  <a href="https://github.com/patchzyy/Wiicompiled/releases"><img alt="macOS 14+, Apple Silicon" src="https://img.shields.io/badge/macOS-14%2B%20%C2%B7%20Apple%20Silicon-0A84FF?logo=apple&amp;logoColor=white"></a>
-</p>
-<p align="center">
-  <a href="#building-from-source"><img alt="PowerPC static recompilation" src="https://img.shields.io/badge/PowerPC-static%20recompilation-FF9F0A"></a>
-  <a href="#retro-rewind"><img alt="Retro Rewind supported" src="https://img.shields.io/badge/Retro%20Rewind-supported-FF375F"></a>
-  <a href="https://github.com/TeamWheelWizard/WheelWizard/releases"><img alt="Install with Wheel Wizard" src="https://img.shields.io/badge/install%20with-Wheel%20Wizard-8B5CF6"></a>
-  <a href="https://github.com/patchzyy/Wiicompiled/releases"><img alt="Total downloads" src="https://img.shields.io/github/downloads/patchzyy/Wiicompiled/total?color=00B8D9&amp;logo=github"></a>
-  <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/license-GPLv3-2EA44F?logo=gnu&amp;logoColor=white"></a>
-</p>
-
-A native PC port of Mario Kart Wii, made with static recompilation.
-
-There's no emulator in the loop, no interpreter, no JIT, no PowerPC
-anywhere at runtime.
+It is a fork of [WiiCompiled](https://github.com/patchzyy/Wiicompiled), the
+Mario Kart Wii recompilation, retargeted to one disc of a different game. See
+[`ORIGIN.md`](ORIGIN.md) for what was taken from where.
 
 > [!IMPORTANT]
-> There is no Nintendo code, no assets and no game data anywhere in this project or its releases.
-> You need your own legally dumped copy of the PAL version of the game. Setup only ships the
-> toolchain, the translation runs on your machine against your disc image, and nothing ever gets
-> uploaded.
+> This repository contains no game code, no translated code and no game data.
+> You need your own legally dumped copy of the game (**RBWE01**, the NTSC-U disc,
+> revision 0). The translation and the compilation run on your machine against
+> your disc, and nothing is uploaded anywhere.
 
-[What is a github, I just want to play](https://github.com/TeamWheelWizard/WheelWizard/releases/latest)
+**Status: 0.1.0, early.** macOS on Apple Silicon only. The campaign's first
+mission plays from start to victory with keyboard and mouse; the second mission
+loads and plays; nothing beyond that has been checked. Rendering is at the
+console's 640×480 and 30 fps. Full list in [`CHANGELOG.md`](CHANGELOG.md).
 
----
+![Mission 1 running natively on an Apple Silicon Mac](docs/images/mission1.png)
 
-## What it does
+## What works
 
-**Unlocked framerate with interpolation.** 
-The original game is hard-locked to 60 fps. The runtime can generate interpolated frames in between, so on a
-120/144 Hz monitor things genuinely look smoother.
+| Area | 0.1.0 |
+| --- | --- |
+| Platform | Native arm64 binary for macOS 14+ (Apple Silicon); graphics through [Aurora](https://github.com/encounter/aurora) on Dawn/Metal |
+| Game | Boot, intro video, title screen, saves (in an emulated NAND), name entry, main menu, campaign prologue and **mission 1 to victory**: tutorial, heavy tank, gunboats, battlestation, gate chains, magazines, tower, autosave and the campaign cinematic. Mission 2 loads and plays |
+| Graphics | Terrain with textures, skinned units, sky, water, HUD, minimap, cinematics, 2D menus and text. Zero decode desyncs over a full mission |
+| Audio | Music, voice lines and sound effects (AI/AX/DSP high-level emulation) |
+| Input | Keyboard and mouse emulate a Wii Remote + Nunchuk, including the IR pointer and lock-on |
+| Translation | 23 897 functions translated from `main.dol` with a reproducible function map; 0 unsupported instructions |
 
-> [!WARNING]
-> Interpolation is experimental right now and will show artifacts in specific scenarios.
+## What does not work yet
 
-**Any aspect ratio you want.** 
-Drag the window bigger, wider, whatever, the camera adjusts
-live.
+- Only mission 1 is verified. The rest of the campaign, skirmish and multiplayer
+  are untested. Nintendo WFC is off.
+- Internal resolution is the console's 640×480; no scaling, aspect-ratio or
+  resolution options yet (next version).
+- No gamepad, no relative mouse, no key remapping, no HOME menu.
+- The upstream WiiCompiled features in the settings overlay (frame
+  interpolation, high internal resolution, music ducking) have not been
+  validated with this game.
+- macOS only. A browser build (WebAssembly + WebGPU) and a PS Vita build are the
+  plan after resolution and controls, not before.
 
-**Native rendering via aurora.** 
-The graphics layer is built on
-[aurora](https://github.com/encounter/aurora). Aurora is a source-level GameCube & Wii compatibility layer.
+## Controls
 
-**High internal resolution.** 
-Play at several times the console's resolution.
+The game is played as on the Wii, with the mouse as the pointer:
 
-**Music ducking.** 
-Start playing something else, Spotify, a YouTube video, and
-the game automatically mutes its own music until the other audio stops. Optional, if you'd
-rather it didn't. Windows uses system media controls and Linux uses MPRIS players.
-On macOS 14.2 or later, this detects other apps with active audio output and excludes
-the game's own audio. Apps that keep an output stream running silently can keep
-game music muted even when nothing is audible.
+| Wii | Keyboard / mouse |
+| --- | --- |
+| IR pointer | Mouse |
+| A / B | Left click / right click |
+| Nunchuk stick | W A S D |
+| D-pad | Arrow keys |
+| + / − | Enter / Backspace |
+| Z / C | Space / Left Shift |
+| 1 / 2 | 1 / 2 |
+| HOME | H (menu not implemented yet) |
 
-**An in-game settings bar.** 
-Press **F10** while the game window has focus:
-- Internal resolution
-- FPS counter
-- MetalFX spatial upscaling on supported macOS GPUs
-- Controller assignment for all four ports
-- Full per-controller button mapping, including the bumpers
-- Dolphin-syntax input expressions and GCPadNew.ini import
-- Controller vibration on/off
-- Volume, instant mute, and the music ducking toggle
+F10 opens the settings overlay.
 
-Everything you change is saved to `Config.toml` on the spot and restored next launch.
+## Building and running
 
-**Dolphin-compatible input expressions.** 
-Each GameCube control can carry an expression in Dolphin's input syntax, with the same operators
-and the same functions.
-A Dolphin `GCPadNew.ini` can be imported directly from the F10 bar.
+Everything is built on your machine. From a clean clone on an M4 Mac with 10
+cores the whole pipeline (function map, translator, translation of 23 897
+functions, configure and C++ compilation) took about 4 minutes, plus the time
+to copy the disc. Slower machines will take longer. You need:
 
-**Vibration toggle.** 
-Force feedback can be turned off for every port at once.
-The official Wii U / Switch GameCube adapter (WUP-028) works too; as with Dolphin, on Windows the
-adapter must be switched to the WinUSB driver once (Zadig).
+- An Apple Silicon Mac with macOS 14 or later and the Xcode Command Line Tools
+  (`xcode-select --install`) for `clang`.
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (the translator
+  is C#).
+- [CMake](https://cmake.org/download/) 3.25 or newer and
+  [Ninja](https://ninja-build.org/) (`python3 -m pip install --user ninja` works).
+- Python 3.10 or newer (the function map).
+- Your RBWE01 disc, either as an image (ISO, RVZ, WBFS, WIA, CISO, GCZ) or as a
+  folder extracted with Dolphin or [nodtool](https://github.com/encounter/nod)
+  (`sys/` and `files/` inside).
 
-**Real Wii Remotes over Bluetooth.**
-Pair a Wii Remote with Windows (Settings > Bluetooth > Add device, press 1+2 or SYNC, leave the
-PIN empty)
+Then:
 
-Known limitations of the Wii Remote path:
-- No IR pointer yet: menus are navigated with the D-pad and A (the game treats the remote as
-  pointing away from the screen).
-- Battery level is not reported to the game and the remote's speaker is not implemented.
-- Only the Wii Remote's own accelerometer is calibrated; the Nunchuk's uses SDL's fixed zero point.
-- The Classic Controller's L/R triggers reach the game as digital (full pull on click): SDL does not
-  expose their analog travel.
-- Turn the Wii Remote support off in that menu if you use a Mayflash DolphinBar, which already
-  presents the remote as a regular gamepad.
-
-## Requirements
-
-- Windows 10 or 11, 64-bit
-- GPU: GTX 1650 / RX 6400 / Arc A310 or higher
-- CPU: Intel Core i5-8400 / AMD Ryzen 5 2600 (4c/6c, ~3.5GHz+) or higher
-- About 20 GB of free disk space during installation (Final game size ~5 GB)
-- macOS 12 (Monterey) or later on Apple Silicon (`arm64`) or Intel (`x86_64-v3`); pre-Haswell Intel CPUs are unsupported
-- On macOS, a Metal-capable GPU and Apple Xcode Command Line Tools (Setup opens Apple's installer when they are missing)
-- A clean, unmodified **PAL `RMCP01`** disc image of Mario Kart Wii, dumped by you. ISO, GCM,
-  GCZ, CISO, WBFS, WIA and RVZ are accepted.
-
-> [!NOTE]
-> GPU/CPU minimums are set by driver support and D3D12/Vulkan feature requirements, not by the game's actual demands.
-
-Only the clean PAL revision will work. Anything else (other
-regions, patched executables) is rejected outright.
-
-> [!NOTE]
-> Nobody here will tell you where to get the game. Dumping your own disc is on you, and links to
-> game files won't be provided or tolerated.
-
-## Installing
-
-For an easy experience, use [Wheel Wizard](https://github.com/TeamWheelWizard/WheelWizard). Pick your clean PAL `RMCP01`
-image under Settings, turn on **WiiCompiled (beta)**, and hit install from the Home page.
-Wheel Wizard downloads the setup tool from this repo and walks you through install, updates and
-launching. The backend itself is deliberately command-line only, Wheel Wizard is a wrapper around it.
-
-### macOS
-
-Download `WiiCompiled-Setup.pkg` from this repository's Releases page and open it. The universal
-package selects the appropriate bundled tools for the host architecture, supporting both Apple Silicon (`arm64`)
-and Intel (`x86_64`) Macs. It installs **WiiCompiled Setup** in Applications; open that app, choose
-your clean PAL `RMCP01` disc image, and select either the base game or Retro Rewind. For Retro Rewind, choose the `RetroRewind6` folder
-or its parent folder.
-
-Setup verifies and extracts the image locally, then translates and compiles the native app on your
-Mac. On a first run it may ask macOS to install Xcode Command Line Tools; complete Apple's installer,
-then open Setup again. When the build completes, Setup asks for administrator approval once to install
-`WiiCompiled.app` (and, if selected, `RetroRewind.app`) in `/Applications`.
-
-Setup opens Terminal while it works, so the extraction and build progress—and any error that needs
-reporting—remain visible.
-
-> [!CAUTION]
-> Only take builds from this repository's
-> [Releases](https://github.com/patchzyy/Wiicompiled/releases) page. If someone's sharing an
-> installer through Discord or some random download site, don't touch it!!
-
-## A note on related projects
-
-WiiCompiled, Wheel Wizard, Retro rewind and other related projects are developed
-**independently** and each has its **own** contribution rules and all have their own
-rules. What applies here does not automatically apply there,
-and vice versa. Check each project's own CONTRIBUTING and README files.
-
-## Retro Rewind
-
-[Retro Rewind](https://wiki.tockdom.com/wiki/Retro_Rewind), ZPL's Mario Kart Wii mod distribution,
-can be built as its **own static profile**: instead of applying `Code.pul` as runtime patches,
-the Kamek/Pulsar code is statically translated together with the base game into a separate native
-executable.
-
-Wheel Wizard drives this too.
-
-## Building from source
-
-Owning the game is still required even if you compile everything yourself.
-
-You'll need: .NET 8 SDK, CMake, Ninja, and LLVM/Clang (the shipped build uses LLVM-MinGW targeting
-`x86-64-v3`).
-
-Build the translator:
-
-```powershell
-dotnet build translator/Translator.sln -c Release
+```sh
+git clone https://github.com/<org>/frontline2-recomp.git
+cd frontline2-recomp
+./build.sh "/path/to/your/RBWE01.rvz"      # or the extracted folder
 ```
 
-The default test suite needs no binaries and no host C++ compiler, so you can hack on the
-translator without any game data around.
+`build.sh` checks the `main.dol` hash (any other disc or region is rejected),
+extracts the image if needed (it downloads a pinned, checksummed
+[nodtool](https://github.com/encounter/nod) release for that), installs the game
+files into the app's data folder, generates the function map, builds the
+translator, translates `main.dol`, generates the build graph and compiles the
+runtime. It ends by writing `dvd_root` into the configuration file. Logs of every
+step land in `build-macos/*.log`.
 
-For everything beyond that, feeding in your own `main.dol`/`StaticR.rel`, running the
-translation, generating the manifest and build graph, and compiling, see [`translator/README.md`](translator/README.md).
+Run the game with:
 
-For a step-by-step guide on compiling both WiiCompiled and Retro Rewind from source on macOS (Apple Silicon), see the [macOS Build Guide](docs/building-macos.md).
+```sh
+build-macos/FrontlineRecomp
+```
+
+Configuration, saves and logs live in
+`~/Library/Application Support/FrontlineRecomp/` (`Config.toml`, `NAND/`,
+`Logs/`). The binary and that folder keep the earlier working name
+`FrontlineRecomp` in the 0.1.x series so existing saves stay where they are.
+
+Rebuild after changing the runtime only: `./build.sh --skip-translate`. The
+developer loop after changing the translator or the address tables is
+`projects/bw2/tools/iterate.sh`.
+
+## How it is made
+
+- **Translator** (`translator/`, C#): WiiCompiled's static recompiler, with
+  fixes from the [Strikers](https://github.com/BlackAndBlue95/Strikers-WiiCompiled)
+  and [NSMB-Wii](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Recompilation)
+  forks and fixes of our own (function tables called through `bctrl`, short
+  virtual methods that look like data, paired-single store and dataflow bugs
+  that broke the lock-on and the 2D text).
+- **Function map** (`projects/bw2/tools/bw2_function_map.py`): finds the 23 499
+  function starts in the DOL from branch targets, prologues, vtables, jump
+  tables, the game's SEL export table and Dolphin's SDK signature database, so
+  functions only reached through indirect calls are translated too.
+- **Runtime** (`runtime/`): WiiCompiled's high-level emulation of the Wii SDK
+  (OS, DVD, VI, GX, AI/AX/DSP, PAD, WPAD/KPAD, NAND) re-keyed from Mario Kart Wii
+  to this game's addresses by a deterministic tool
+  (`projects/bw2/tools/remap_runtime.py` over `projects/bw2/remap/*.csv`, each
+  row with its evidence), plus game-specific pieces in `runtime/src/hle/bw2/`.
+- **Graphics** (`aurora-main/`): Aurora translates GX to WebGPU through Dawn;
+  Metal on macOS. The port adds per-draw array-range tracking for display lists
+  that set their vertex format inside, and several GX state fixes.
+- **Diagnostics**: traces of DVD reads, GX display lists with a CPU reference
+  decoder, memory watches, indirect/direct/static call traces, frame captures
+  and scripted input for automated runs (`BW2_*` and `AURORA_*` environment
+  variables; see `CHANGELOG.md`).
 
 ## FAQ
 
 **Is this an emulator?**
-No. Everything is compiled to native code before you ever press play. At runtime there's nothing
-emulating a Wii CPU or GPU.
+No. The game's code is compiled to native code before you run it. At runtime
+nothing emulates a PowerPC CPU or the Wii GPU: the GX calls go to Aurora, which
+draws with Metal.
 
 **Do you provide the game?**
-No. Don't ask. Nothing in this repo or any release contains Nintendo code or assets.
+No. Nothing in this repository contains game code or data, and the translated
+code (`generated/`) and the extracted disc (`Assets/`) are produced on your
+machine and ignored by git. Only RBWE01 revision 0 is supported; other regions
+and modified executables are rejected by hash.
 
-**Why does setup take so long?**
-Because we **don't** ship the translated binary, most other recomp projects do, but we
-don't want to risk it right now, setup has to run a static recompiler over the whole game
-and then throw a C++ compiler at the result. It's a **one-time cost** on your machine.
+**Why is the setup so slow?**
+Because the translated binary is not distributed: the recompiler runs over the
+whole game and a C++ compiler over the result, once, on your machine. The same
+model as WiiCompiled.
 
-**Which game version works?**
-Clean PAL `RMCP01`. Other regions and modified executables are **rejected**. Translating
-them against the wrong manifest would give you a subtly broken game that's miserable to debug for us.
+**Windows? Linux? Steam Deck?**
+Not now. WiiCompiled's runtime supports them (Dawn over Vulkan and D3D12), so it
+is feasible, but macOS first, browser second, Vita later. Contributions welcome.
 
-**Can I recompile other GameCube/Wii games with it?**
-The translator itself handles DOLs and RELs generically, see
-`projects/examples/generic-dol.yml`. The catch is that a *playable* port also needs a runtime:
-audio, input, GX, everything the game touches.
+**Will you fix the original game's bugs?**
+No: behavior identical to the Wii is the goal. Report only what differs from the
+original game.
 
-**The game crashed / stopped with an error.**
-Errors are deliberately loud instead of quietly swallowed. Send a report along with the run log
-from `%LOCALAPPDATA%\WiiCompiled\Logs`.
-
-**Will you fix original bugs?**
-Not in the base game, behavior identical to real hardware is the goal. Only report things where this port differs
-from the original game. As for Retro Rewind, some base-game behavior **is** patched, so if it differs from the
-base game, that's normal. If Retro Rewind behavior differs between Dolphin/Wii and WiiCompiled, open an issue on GitHub.
-
-**How accurate are the physics?**
-100% - this is proven by in-game ghosts. Since ghosts are replay files based on inputs rather
-than tracked positions, matching ghosts prove the physics match across Dolphin/Wii/WiiCompiled.
-
-**Is it done?**
-Not fully. The game is in a state where everything should be playable and the physics do match
-100% with the original game, but compatibility, rendering, networking and performance are all
-actively being worked on. If you do find an issue, we strongly encourage you to open one on
-GitHub so we can take a look at it.
+**Something crashed or looks wrong.**
+Open an issue with the run log from
+`~/Library/Application Support/FrontlineRecomp/Logs/` and, for visual problems, a
+screenshot. Errors are deliberately loud.
 
 ## AI usage
-AI coding tools were used during development of this project. 
-All translated output is verified against real hardware behavior and most importantly, physics accuracy is proven synced across Wii, Dolphin, and WiiCompiled (see FAQ). 
+
+Full disclosure: the translator and runtime changes were developed with AI
+assistance (Claude Code), with every fix measured against traces of the running
+game and verified in-game before being kept. The plan, the debugging and what
+goes in are mine.
+
+The contribution rules in [`CONTRIBUTING.md`](CONTRIBUTING.md) apply to
+AI-assisted and hand-written code alike.
 
 ## Credits
-- **inkwreck** - making the logo
-- **[aurora](https://github.com/encounter/aurora)** - the GX rendering/windowing backend this
-  project's whole graphics layer sits on. MIT licensed.
-- **[Dawn](https://dawn.googlesource.com/dawn)** - Google's WebGPU implementation, powering
-  aurora's Direct3D, Vulkan and OpenGL backends.
-- **[Dolphin Emulator](https://github.com/dolphin-emu/dolphin)** - an invaluable reference for Wii
-  hardware behavior during development, plus the source of the free DSP coefficient ROM and the
-  unmodified default WiiConnect24 bootstrap tree bundled with the runtime.
-- **[Retro Rewind](https://wiki.tockdom.com/wiki/Retro_Rewind)** by ZPL and team - the mod
-  distribution this project supports.
-- **[Wheel Wizard](https://github.com/TeamWheelWizard/WheelWizard)** - the mod manager this
-  project integrates with as a launch backend.
+
+- **[WiiCompiled](https://github.com/patchzyy/Wiicompiled)** by patchzyy and
+  contributors: the translator, the runtime and the whole approach. This port
+  is a fork of it (GPLv3).
+- **[Aurora](https://github.com/encounter/aurora)** by Luke Street (encounter):
+  the GX-to-WebGPU layer (MIT).
+- **[Dawn](https://dawn.googlesource.com/dawn)**: Google's WebGPU implementation
+  behind Aurora's Metal backend.
+- **[Strikers-WiiCompiled](https://github.com/BlackAndBlue95/Strikers-WiiCompiled)**
+  and **[NSMB-Wii-Multiplayer-Recompilation](https://github.com/WitherBlitz/NSMB-Wii-Multiplayer-Recompilation)**:
+  translator fixes and the recipe for retargeting WiiCompiled to another game.
+- **[mh3-wii](https://github.com/Grarak/mh3-wii)** by Grarak: the web toolchain
+  and the SEL/RSO handling that showed the way for this game's modules.
+- **[Dolphin Emulator](https://github.com/dolphin-emu/dolphin)**: the SDK
+  signature database used to name functions, the free DSP coefficient ROM and
+  the reference for Wii hardware behavior.
 - Everyone in the static recompilation community.
 
-Bundled third-party components and their licenses live in
+Bundled third-party components and their licenses are listed in
 [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
-
 
 ## License
 
-WiiCompiled is free software: you can redistribute it and/or modify it under the terms of the
-[GNU General Public License, version 3](LICENSE) as published by the Free Software Foundation.
+Frontline 2 Recomp is free software: you can redistribute it and/or modify it
+under the terms of the [GNU General Public License, version 3](LICENSE) as
+published by the Free Software Foundation, like WiiCompiled it derives from.
 
-WiiCompiled is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
-even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-General Public License for more details.
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE. See the GNU General Public License for more details.
 
-Any mkwii distribution making use of WiiCompiled must be licensed under GPL v3.0.
-
-Not affiliated with, endorsed by, or associated with Nintendo. Mario Kart Wii is a trademark of
-Nintendo. No Nintendo intellectual property is contained in, distributed with, or obtainable
-through this project.
+Not affiliated with, endorsed by, or associated with Nintendo or Kuju
+Entertainment. Battalion Wars is a trademark of Nintendo. This project uses the
+name only to say which game it ports.

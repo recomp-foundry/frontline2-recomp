@@ -1,8 +1,9 @@
 # Third-Party Notices
 
-WiiCompiled itself is licensed under the GNU General Public License v3.0
-(see [`LICENSE`](LICENSE)). It incorporates, links against, or redistributes the third-party
-components listed below. Each remains under its own license and copyright.
+Frontline 2 Recomp is a fork of WiiCompiled; both are licensed under the GNU General Public
+License v3.0 (see [`LICENSE`](LICENSE) and [`ORIGIN.md`](ORIGIN.md)). The project incorporates,
+links against, or redistributes the third-party components listed below. Each remains under its
+own license and copyright.
 
 Nothing listed here is Nintendo intellectual property. This project ships no game code, assets,
 or data of any kind - see the [README](README.md).

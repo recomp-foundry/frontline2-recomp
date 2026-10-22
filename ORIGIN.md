@@ -1,6 +1,6 @@
 # Origin
 
-This repository is a fork of [WiiCompiled](https://github.com/patchzyy/Wiicompiled),
+Frontline 2 Recomp is a fork of [WiiCompiled](https://github.com/patchzyy/Wiicompiled),
 imported unmodified at commit `bd219e38a3e9a1a5047ce41d8cd01210bef3af43`
 (2026-10-09, "fix: drive compile progress from ninja's [done/total] counter (#285)")
 and retargeted from Mario Kart Wii to one disc: RBWE01 revision 0
