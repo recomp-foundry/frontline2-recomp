@@ -84,7 +84,7 @@ to copy the disc. Slower machines will take longer. You need:
 Then:
 
 ```sh
-git clone https://github.com/<org>/frontline2-recomp.git
+git clone https://github.com/recomp-foundry/frontline2-recomp.git
 cd frontline2-recomp
 ./build.sh "/path/to/your/RBWE01.rvz"      # or the extracted folder
 ```
