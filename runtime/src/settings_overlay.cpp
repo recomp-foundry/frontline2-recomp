@@ -444,7 +444,9 @@ const char* KeyBindingName(int scancode) {
     }
 }
 
-enum class RebindKind { KeyboardButton, KeyboardAxis, Controller, MuteHotkey, WiiRemote };
+enum class RebindKind { KeyboardButton, KeyboardAxis, Controller, MuteHotkey, WiiRemote, WiiRemotePad };
+// BW2: WiiRemote / WiiRemotePad rebind the emulated remote (bw2_hle.h); the pad one captures like Controller.
+constexpr bool IsPadRebind(RebindKind kind) { return kind == RebindKind::Controller || kind == RebindKind::WiiRemotePad; }
 struct RebindState {
     bool active = false;
     bool openPopup = false;
@@ -476,7 +478,7 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
     std::copy_n(keys, std::min(count, static_cast<int>(g_rebind.keys.size())), g_rebind.keys.begin());
     g_rebind.mouse = SDL_GetMouseState(nullptr, nullptr);
     const int index = PADGetIndexForPort(g_rebind.port);
-    if (kind == RebindKind::Controller && index >= 0) {
+    if (IsPadRebind(kind) && index >= 0) {
         if (auto* pad = PADGetSDLGamepadForIndex(index)) {
             g_rebind.instance = SDL_GetGamepadID(pad);
             for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT; ++i)
@@ -489,6 +491,13 @@ void BeginRebind(RebindKind kind, uint16_t target, const char* label, bool secon
 
 void CompleteRebind(uint32_t value) {
     const auto& capture = g_rebind;
+    if (capture.kind == RebindKind::WiiRemotePad) {
+        const int index = PADGetIndexForPort(capture.port);
+        auto* pad = index >= 0 ? PADGetSDLGamepadForIndex(index) : nullptr;
+        if (pad != nullptr && SDL_GetGamepadID(pad) == capture.instance) Bw2RemotePadBindings::SetBinding(capture.target, value);
+        g_rebind.active = false;
+        return;
+    }
     if (capture.kind == RebindKind::Controller) {
         const int index = PADGetIndexForPort(capture.port);
         auto* pad = index >= 0 ? PADGetSDLGamepadForIndex(index) : nullptr;
@@ -516,7 +525,6 @@ void CompleteRebind(uint32_t value) {
         g_rebind.active = false;
         return;
     } else if (capture.kind == RebindKind::WiiRemote) {
-        // BW2: the emulated Wii Remote + Nunchuk keeps its own keys ([wii_remote] in Config.toml).
         Bw2RemoteBindings::SetBinding(capture.target, static_cast<int>(value));
         g_rebind.active = false;
         return;
@@ -540,7 +548,7 @@ void DrawRebindPrompt() {
     }
     if (g_rebind.active) {
         ImGui::Text("Rebind: %s", g_rebind.label.c_str());
-        ImGui::TextUnformatted(g_rebind.kind == RebindKind::Controller
+        ImGui::TextUnformatted(IsPadRebind(g_rebind.kind)
             ? "Press a controller button, pull a trigger, or move a stick."
             : g_rebind.kind == RebindKind::MuteHotkey
                 ? "Press a keyboard key."
@@ -555,9 +563,9 @@ void DrawRebindPrompt() {
         // UI clicks must not become mouse bindings (buttons activate on release).
         const bool overControl = ImGui::IsAnyItemHovered();
         if (g_rebind.active && (clear || remaining <= 0.0f)) {
-            CompleteRebind(g_rebind.kind == RebindKind::Controller ? PAD_NATIVE_BUTTON_DISABLED
+            CompleteRebind(IsPadRebind(g_rebind.kind) ? PAD_NATIVE_BUTTON_DISABLED
                                                                   : static_cast<uint32_t>(PAD_KEY_INVALID));
-        } else if (g_rebind.active && SDL_GetKeyboardFocus() != nullptr && g_rebind.kind != RebindKind::Controller) {
+        } else if (g_rebind.active && SDL_GetKeyboardFocus() != nullptr && !IsPadRebind(g_rebind.kind)) {
             int count = 0;
             const bool* keys = SDL_GetKeyboardState(&count);
             for (int i = 1; i < std::min(count, static_cast<int>(SDL_SCANCODE_COUNT)) && g_rebind.active; ++i) {
@@ -569,7 +577,7 @@ void DrawRebindPrompt() {
                 if (!overControl && g_rebind.kind != RebindKind::MuteHotkey &&
                     (mouse & ~g_rebind.mouse & (1u << (i - 1))) != 0) CompleteRebind(static_cast<uint32_t>(-i - 1));
             g_rebind.mouse = mouse;
-        } else if (g_rebind.active && SDL_GetKeyboardFocus() != nullptr && g_rebind.kind == RebindKind::Controller) {
+        } else if (g_rebind.active && SDL_GetKeyboardFocus() != nullptr && IsPadRebind(g_rebind.kind)) {
             auto* pad = SDL_GetGamepadFromID(g_rebind.instance);
             if (pad != nullptr) {
                 for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT && g_rebind.active; ++i) {
@@ -764,8 +772,9 @@ void DrawControllerSettings() {
     ImGui::Separator();
     const uint32_t selectedGamePort = static_cast<uint32_t>(g_controllerPort);
     // BW2 reads channel 0 as a Wii Remote + Nunchuk (KPADRead) and never calls
-    // PADRead, so the GameCube bindings below do not reach it; the keyboard and
-    // mouse stand in for the remote while none is paired (hle/bw2/keyboard_remote.cpp).
+    // PADRead, so the GameCube bindings below do not reach it; the keyboard, the
+    // mouse and a PC gamepad stand in for the remote while none is paired
+    // (hle/bw2/keyboard_remote.cpp).
     if (selectedGamePort == 0) {
         ImGui::SeparatorText("Wii Remote + Nunchuk (keyboard and mouse)");
         ImGui::TextDisabled("Used while no Wii Remote is paired. The mouse is always the pointer.");
@@ -778,6 +787,28 @@ void DrawControllerSettings() {
         }
         if (ImGui::Button("Reset to defaults")) Bw2RemoteBindings::ResetBindings();
         ImGui::PopID();
+        if (Bw2RemotePadBindings::Connected()) {
+            ImGui::SeparatorText("Wii Remote + Nunchuk (gamepad)");
+            ImGui::TextDisabled("Left stick = Nunchuk stick, right stick moves the pointer; the keyboard stays active.");
+            ImGui::PushID("wii_remote_pad");
+            for (unsigned int i = 0; i < Bw2RemotePadBindings::Count; ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                const std::string caption =
+                    std::string(NativeButtonForValue(Bw2RemotePadBindings::Binding(i)).label) + "##padbinding";
+                if (ImGui::Button(caption.c_str(), ImVec2(220.0f, 0.0f)))
+                    BeginRebind(RebindKind::WiiRemotePad, static_cast<uint16_t>(i), Bw2RemoteBindings::Label(i));
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+                ImGui::TextUnformatted(Bw2RemoteBindings::Label(i));
+                ImGui::PopID();
+            }
+            float pointerSpeed = Bw2RemotePadBindings::PointerSpeed();
+            ImGui::SetNextItemWidth(220.0f);
+            if (ImGui::SliderFloat("Pointer speed", &pointerSpeed, 0.5f, 8.0f, "%.1f"))
+                Bw2RemotePadBindings::SetPointerSpeed(pointerSpeed, false);
+            if (ImGui::IsItemDeactivatedAfterEdit()) Bw2RemotePadBindings::SetPointerSpeed(pointerSpeed, true);
+            if (ImGui::Button("Reset to defaults")) Bw2RemotePadBindings::ResetBindings();
+            ImGui::PopID();
+        }
         ImGui::SeparatorText("GameCube controller (not read by this game)");
     }
     if (DrawKeyboardSettings(selectedGamePort)) {
@@ -1335,7 +1366,7 @@ void DrawTopBar() {
     ImGui::End();
     if (!ImGui::BeginMainMenuBar()) return;
 
-    ImGui::TextUnformatted("FrontlineRecomp 0.1.3");
+    ImGui::TextUnformatted("FrontlineRecomp 0.1.4");
     ImGui::Separator();
     const auto resolutionIt = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
         return std::fabs(item.scale - g_resolutionScale) < 0.001f;
@@ -1497,7 +1528,7 @@ void HandleEvents(const AuroraEvent* events) noexcept {
         controller_mapping_wizard::HandleSdlEvent(ev->sdl);
         if (g_rebind.active && (IsToggleKey(ev->sdl, SDL_SCANCODE_BACKSPACE) ||
                                 IsToggleKey(ev->sdl, SDL_SCANCODE_DELETE))) {
-            CompleteRebind(g_rebind.kind == RebindKind::Controller ? PAD_NATIVE_BUTTON_DISABLED
+            CompleteRebind(IsPadRebind(g_rebind.kind) ? PAD_NATIVE_BUTTON_DISABLED
                                                                   : static_cast<uint32_t>(PAD_KEY_INVALID));
         }
         if (!g_rebind.active && IsToggleKey(ev->sdl, SDL_SCANCODE_F10)) {

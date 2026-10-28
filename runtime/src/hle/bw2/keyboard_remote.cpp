@@ -9,6 +9,11 @@
 // Those are the defaults; the [wii_remote] section of Config.toml overrides any
 // of them (key names as SDL prints them, "mouse_left".."mouse_x2", "" = none)
 // and the settings overlay (F10 > Controller settings) edits that section.
+// A PC gamepad assigned to port 1 adds to that: left stick = Nunchuk stick,
+// right stick moves the pointer (the mouse takes it back as soon as it moves),
+// buttons per [wii_remote_pad] (names of controller_button_names.h; defaults
+// south/east = A/B, west/north = 1/2, start/back = +/-, guide = HOME,
+// left trigger = Z, left bumper = C, d-pad = d-pad).
 // BW2_AUTOPRESS=1 also holds A+B for 1.5 s every 5 s (unattended boot tests);
 // BW2_AUTOPRESS_B_SECONDS=N stops pressing B after N seconds; BW2_AUTOPOINT aims the pointer.
 #include "bw2_hle.h"
@@ -26,12 +31,14 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include "controller_button_names.h"
 #include "input_bindings.h"
 #include "memory.h"
 #include "runtime_config.h"
 #include "wii_remote_input.h"
 
 #include <dolphin/pad.h>
+#include <SDL3/SDL_gamepad.h>
 
 #include <array>
 #include <atomic>
@@ -145,6 +152,130 @@ void StoreRemoteKey(unsigned int input, int key) {
                                     RuntimeConfigFile::FormatString(RemoteKeyName(key)));
 }
 
+// ---- PC gamepad as the same remote ([wii_remote_pad]) ----
+
+constexpr std::array<uint32_t, Bw2RemotePadBindings::Count> kPadDefaults = {
+    SDL_GAMEPAD_BUTTON_SOUTH,                                      // A
+    SDL_GAMEPAD_BUTTON_EAST,                                       // B
+    SDL_GAMEPAD_BUTTON_WEST,                                       // 1
+    SDL_GAMEPAD_BUTTON_NORTH,                                      // 2
+    SDL_GAMEPAD_BUTTON_START,                                      // +
+    SDL_GAMEPAD_BUTTON_BACK,                                       // -
+    SDL_GAMEPAD_BUTTON_GUIDE,                                      // HOME
+    SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+    SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT,
+    PADEncodeAxisButton(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, false),      // Z
+    SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,                              // C
+};
+constexpr float kDefaultPointerSpeed = 2.5f;
+constexpr float kStickDeadZone = 0.15f;
+std::array<std::atomic<uint32_t>, Bw2RemotePadBindings::Count> g_padButtons;
+std::atomic<float> g_pointerSpeed{kDefaultPointerSpeed};
+std::once_flag g_padBindingsLoaded;
+
+void LoadPadBindings() {
+    for (size_t i = 0; i < kPadDefaults.size(); ++i) {
+        g_padButtons[i].store(kPadDefaults[i], std::memory_order_relaxed);
+    }
+    const auto path = RuntimeConfigFile::ResolveConfigPath();
+    std::ifstream input(path);
+    if (!input) {
+        return;
+    }
+    try {
+        const toml::value document = toml::parse(input, RuntimeConfigFile::PathToUtf8(path));
+        if (!document.contains("wii_remote_pad")) {
+            return;
+        }
+        const toml::value& section = toml::find(document, "wii_remote_pad");
+        for (size_t i = 0; i < kPadDefaults.size(); ++i) {
+            const char* key = kRemoteBindings[i].configKey;
+            if (!section.contains(key)) {
+                continue;
+            }
+            std::string name = toml::find<std::string>(section, key);
+            name = name.substr(0, name.find('@'));  // the overlay's "@threshold" suffix
+            const ControllerNames::NativeButtonItem* item = ControllerNames::FindNativeButton(ControllerNames::TrimToken(name));
+            g_padButtons[i].store(item != nullptr ? item->nativeButton : PAD_NATIVE_BUTTON_DISABLED, std::memory_order_relaxed);
+        }
+        if (section.contains("pointer_speed")) {
+            const double speed = toml::find<double>(section, "pointer_speed");
+            if (speed > 0.0 && speed < 100.0) {
+                g_pointerSpeed.store(static_cast<float>(speed), std::memory_order_relaxed);
+            }
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[bw2] [wii_remote_pad] in Config.toml ignored: %s\n", e.what());
+    }
+}
+
+uint32_t PadBinding(unsigned int input) {
+    std::call_once(g_padBindingsLoaded, LoadPadBindings);
+    return input < Bw2RemotePadBindings::Count ? g_padButtons[input].load(std::memory_order_relaxed) : PAD_NATIVE_BUTTON_DISABLED;
+}
+
+void StorePadBinding(unsigned int input, uint32_t value) {
+    if (input >= Bw2RemotePadBindings::Count) {
+        return;
+    }
+    std::call_once(g_padBindingsLoaded, LoadPadBindings);
+    g_padButtons[input].store(value, std::memory_order_relaxed);
+    RuntimeConfigFile::WriteSetting("wii_remote_pad", kRemoteBindings[input].configKey,
+                                    RuntimeConfigFile::FormatString(ControllerNames::NativeButtonForValue(value).configName));
+}
+
+// The SDL gamepad on game port 0 unless it is a Wii controller (those reach
+// KPAD through WiiRemoteInput before this file is consulted).
+SDL_Gamepad* RemotePad() {
+    const int32_t index = PADGetIndexForPort(0);
+    if (index < 0 || WiiRemoteInput::IsRemoteChannel(0)) {
+        return nullptr;
+    }
+    return PADGetSDLGamepadForIndex(static_cast<uint32_t>(index));
+}
+
+// A native binding as the overlay encodes it: an SDL button, or an axis past
+// its threshold (PADEncodeAxisButton).
+bool PadPressed(SDL_Gamepad* pad, uint32_t binding) {
+    if (binding == PAD_NATIVE_BUTTON_DISABLED || binding == PAD_NATIVE_BUTTON_INVALID) {
+        return false;
+    }
+    if (PADIsAxisButton(binding)) {
+        const uint32_t axis = PADAxisButtonAxis(binding);
+        if (axis >= SDL_GAMEPAD_AXIS_COUNT) {
+            return false;
+        }
+        const int value = SDL_GetGamepadAxis(pad, static_cast<SDL_GamepadAxis>(axis));
+        const int threshold = static_cast<int>(PADAxisButtonThreshold(binding)) * 32767 / 100;
+        return PADAxisButtonNegative(binding) ? value <= -threshold : value >= threshold;
+    }
+    return binding < SDL_GAMEPAD_BUTTON_COUNT && SDL_GetGamepadButton(pad, static_cast<SDL_GamepadButton>(binding));
+}
+
+// Stick with a radial dead zone, rescaled so the edge of the dead zone is 0; SDL's +y is down.
+void PadStick(SDL_Gamepad* pad, SDL_GamepadAxis xAxis, SDL_GamepadAxis yAxis, float& x, float& y) {
+    x = SDL_GetGamepadAxis(pad, xAxis) / 32767.0f;
+    y = -SDL_GetGamepadAxis(pad, yAxis) / 32767.0f;
+    const float magnitude = std::sqrt(x * x + y * y);
+    if (magnitude <= kStickDeadZone) {
+        x = y = 0.0f;
+        return;
+    }
+    const float scale = std::min((magnitude - kStickDeadZone) / (1.0f - kStickDeadZone), 1.0f) / magnitude;
+    x *= scale;
+    y *= scale;
+}
+
+// Pointer driven by the right stick; the mouse owns it again as soon as it moves.
+struct PadPointer {
+    float x = 0.0f;
+    float y = 0.0f;
+    bool active = false;
+    float lastMouseX = -1.0f;
+    float lastMouseY = -1.0f;
+    std::chrono::steady_clock::time_point last{};
+} g_padPointer;
+
 } // namespace
 
 namespace Bw2RemoteBindings {
@@ -157,6 +288,31 @@ void ResetBindings() {
     }
 }
 } // namespace Bw2RemoteBindings
+
+namespace Bw2RemotePadBindings {
+bool Connected() { return RemotePad() != nullptr; }
+unsigned int Binding(unsigned int input) { return PadBinding(input); }
+void SetBinding(unsigned int input, unsigned int nativeButton) { StorePadBinding(input, nativeButton); }
+void ResetBindings() {
+    for (unsigned int i = 0; i < Count; ++i) {
+        StorePadBinding(i, kPadDefaults[i]);
+    }
+    SetPointerSpeed(kDefaultPointerSpeed, true);
+}
+float PointerSpeed() {
+    std::call_once(g_padBindingsLoaded, LoadPadBindings);
+    return g_pointerSpeed.load(std::memory_order_relaxed);
+}
+void SetPointerSpeed(float speed, bool persist) {
+    speed = std::clamp(speed, 0.1f, 20.0f);
+    g_pointerSpeed.store(speed, std::memory_order_relaxed);
+    if (persist) {
+        char text[32];
+        std::snprintf(text, sizeof(text), "%.2f", speed);
+        RuntimeConfigFile::WriteSetting("wii_remote_pad", "pointer_speed", text);
+    }
+}
+} // namespace Bw2RemotePadBindings
 
 namespace {
 
@@ -404,6 +560,44 @@ bool Bw2KeyboardRemoteSample(unsigned int chan, WiiRemoteInput::KpadSample& samp
             g_pointer.valid = true;
             g_pointer.x = mx / static_cast<float>(w) * 2.0f - 1.0f;  // -1 left .. +1 right
             g_pointer.y = my / static_cast<float>(h) * 2.0f - 1.0f;  // -1 top .. +1 bottom
+        }
+    }
+    if (SDL_Gamepad* pad = RemotePad()) {
+        for (unsigned int i = 0; i < Bw2RemotePadBindings::Count; ++i) {
+            bit(PadPressed(pad, PadBinding(i)), kRemoteBindings[i].hold);
+        }
+        float lx = 0.0f, ly = 0.0f;
+        PadStick(pad, SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY, lx, ly);
+        if (lx != 0.0f || ly != 0.0f) {
+            sample.stick[0] = lx;
+            sample.stick[1] = ly;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const float dt = g_padPointer.last.time_since_epoch().count() == 0
+                             ? 0.0f
+                             : std::min(std::chrono::duration<float>(now - g_padPointer.last).count(), 0.1f);
+        g_padPointer.last = now;
+        if (mx != g_padPointer.lastMouseX || my != g_padPointer.lastMouseY) {
+            g_padPointer.lastMouseX = mx;
+            g_padPointer.lastMouseY = my;
+            g_padPointer.active = false;  // the mouse moved: it owns the pointer
+        }
+        if (!g_padPointer.active && g_pointer.valid) {
+            g_padPointer.x = g_pointer.x;  // start from wherever the mouse left it
+            g_padPointer.y = g_pointer.y;
+        }
+        float rx = 0.0f, ry = 0.0f;
+        PadStick(pad, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY, rx, ry);
+        if (rx != 0.0f || ry != 0.0f) {
+            const float speed = Bw2RemotePadBindings::PointerSpeed();
+            g_padPointer.x = std::clamp(g_padPointer.x + rx * speed * dt, -1.0f, 1.0f);
+            g_padPointer.y = std::clamp(g_padPointer.y - ry * speed * dt, -1.0f, 1.0f);  // pointer +y is down
+            g_padPointer.active = true;
+        }
+        if (g_padPointer.active) {
+            g_pointer.valid = true;
+            g_pointer.x = g_padPointer.x;
+            g_pointer.y = g_padPointer.y;
         }
     }
     if (RunAutoScript()) {

@@ -39,6 +39,22 @@ void SetBinding(unsigned int input, int key);
 void ResetBindings();
 } // namespace Bw2RemoteBindings
 
+// A PC gamepad (any SDL gamepad on port 1 that is not a Wii controller) as the
+// same remote, alongside the keyboard: its buttons map to the remote's buttons
+// (Bw2RemoteBindings::A..C, PAD native button values as the overlay's controller
+// bindings), the left stick is the Nunchuk stick and the right stick moves the
+// pointer. Kept in [wii_remote_pad] of Config.toml (hle/bw2/keyboard_remote.cpp).
+namespace Bw2RemotePadBindings {
+constexpr unsigned int Count = Bw2RemoteBindings::StickUp;  // buttons only
+bool Connected();
+unsigned int Binding(unsigned int input);
+void SetBinding(unsigned int input, unsigned int nativeButton);
+void ResetBindings();
+// Pointer travel per second at full deflection, in screen heights (2 = edge to edge).
+float PointerSpeed();
+void SetPointerSpeed(float speed, bool persist);
+} // namespace Bw2RemotePadBindings
+
 // The GX copy setters are native (Aurora); the originals also keep their BP
 // words in __GXData, which BW2's translated GXSetDispCopyYScale reads back.
 // These write the same words (hle/bw2/gx_breakpoint.cpp).

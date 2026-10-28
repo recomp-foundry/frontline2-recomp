@@ -5,6 +5,25 @@ All notable changes to this port are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) with `0.y.z` while the port is
 pre-release (see "Versioning" at the end).
 
+## [0.1.4] — 2026-10-28
+
+Patch release on the `controles-pc` branch: the commit that adds this entry;
+version string in the settings overlay (F10) bumped to 0.1.4.
+
+### Added
+
+- PC gamepads (task 09). Any SDL gamepad assigned to port 1 that is not a Wii
+  controller now drives the emulated Wii Remote + Nunchuk alongside the
+  keyboard: left stick = Nunchuk stick (radial dead zone 0.15), right stick
+  moves the pointer (speed configurable; the mouse takes the pointer back as
+  soon as it moves), buttons per a `[wii_remote_pad]` section of
+  `Config.toml` (names of `controller_button_names.h`; defaults south/east =
+  A/B, west/north = 1/2, start/back = +/−, guide = HOME, left trigger = Z,
+  left bumper = C, d-pad = d-pad). F10 → Controller settings → Port 1 gains a
+  "Wii Remote + Nunchuk (gamepad)" section while such a pad is connected, with
+  the controller rebind prompt, a pointer-speed slider and "Reset to defaults"
+  (patch 0032).
+
 ## [0.1.3] — 2026-10-28
 
 Patch release on the `controles-pc` branch: the commit that adds this entry;
@@ -206,7 +225,8 @@ it marks is mission 1 of the campaign played to victory on macOS on
 - `1.0.0`: the full campaign plays on at least one target.
 
 No public releases yet: `0.1.0` is the build at commit `7b36e44` plus this
-file and the version string in the settings overlay; `0.1.1`, `0.1.2` and
-`0.1.3` are the commits that add their changelog entries (2026-10-28). There is deliberately no
+file and the version string in the settings overlay; `0.1.1`, `0.1.2`,
+`0.1.3` and `0.1.4` are the commits that add their changelog entries
+(2026-10-28). There is deliberately no
 `VERSION` file at the repository root: on a case-insensitive filesystem it
 shadows libc++'s `<version>` header because `port/` is on the include path.
