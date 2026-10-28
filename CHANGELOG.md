@@ -5,6 +5,34 @@ All notable changes to this port are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) with `0.y.z` while the port is
 pre-release (see "Versioning" at the end).
 
+## [0.1.2] — 2026-10-28
+
+Patch release: the commit that adds this entry; version string in the
+settings overlay (F10) bumped to 0.1.2. Both fixes are in Aurora
+(`aurora-main/lib/dolphin/gx/GXFrameBuffer.cpp`) and are not specific to
+this game.
+
+### Fixed
+
+- The Wii strap/safety screens shown before the title were a few stretched
+  horizontal bands (task 09b). The game calls `GXSetDispCopyDst(640, 1)`
+  before those screens; the SDK ignores the height argument (the register
+  only keeps the stride) but Aurora sized the display-copy texture by it,
+  so the whole screen was a 640×1 copy scaled to the window. `GXCopyDisp`
+  now takes the XFB line count from the copy source height and the Y
+  scale, as `GXGetNumXfbLines` does, at every resolution (the 0.1.1
+  captures at 1× show the same 655×1 copies).
+- The planet on the title screen and in the mission briefing was drawn on an
+  opaque white rectangle (task 09b). The globe is rendered into the EFB with
+  `GXSetDstAlpha(255)` over a background cleared to alpha 0 and copied out
+  with `GXCopyTex` as an RGB5A3 texture that is later alpha-blended; Aurora
+  cleared the whole EFB alpha to the dst-alpha constant before any copy
+  taken while dst alpha was enabled, so the copy came out fully opaque. Dst
+  alpha only replaces the alpha that draws write; the copy now reads the EFB
+  alpha as it is (`AURORA_COPYTEX_DSTALPHA=1` restores the old behaviour for
+  comparison). The `COPYTEX` draw-trace note now prints `au`, `dstA` and
+  the clear colour.
+
 ## [0.1.1] — 2026-10-28
 
 Patch release: the commit that adds this entry; version string in the
@@ -159,7 +187,7 @@ it marks is mission 1 of the campaign played to victory on macOS on
 - `1.0.0`: the full campaign plays on at least one target.
 
 No public releases yet: `0.1.0` is the build at commit `7b36e44` plus this
-file and the version string in the settings overlay; `0.1.1` is the commit
-that adds its changelog entry (2026-10-28). There is deliberately no
+file and the version string in the settings overlay; `0.1.1` and `0.1.2`
+are the commits that add their changelog entries (2026-10-28). There is deliberately no
 `VERSION` file at the repository root: on a case-insensitive filesystem it
 shadows libc++'s `<version>` header because `port/` is on the include path.

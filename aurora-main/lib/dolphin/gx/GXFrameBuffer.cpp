@@ -426,8 +426,14 @@ void GXCopyDisp(void* dest, GXBool clear) {
   const auto rect = aurora::gx::map_logical_scissor(g_gxState.dispCopySrc);
   const auto logicalDstWidth =
       std::max<u32>(g_gxState.dispCopyDstWidth != 0 ? g_gxState.dispCopyDstWidth : static_cast<u32>(g_gxState.dispCopySrc.width), 1);
-  const auto logicalDstHeight =
-      std::max<u32>(g_gxState.dispCopyDstHeight != 0 ? g_gxState.dispCopyDstHeight : static_cast<u32>(g_gxState.dispCopySrc.height), 1);
+  // The SDK's GXSetDispCopyDst only keeps the stride; the XFB line count comes from the copy
+  // source height and the y-scale (BP 0x4E), as GXGetNumXfbLines computes it. Games may pass
+  // anything as the height (BW2 sends 1 before its title screen), so never size the copy by it.
+  const auto logicalDstHeight = g_gxState.dispCopySrc.height != 0
+                                    ? static_cast<u32>(get_num_xfb_lines_internal(
+                                          static_cast<u16>(g_gxState.dispCopySrc.height),
+                                          y_scale_to_integer(g_gxState.dispCopyYScale)))
+                                    : std::max<u32>(g_gxState.dispCopyDstHeight, 1);
   const auto [dstWidth, dstHeight] = scale_copy_dst(logicalDstWidth, logicalDstHeight);
 
   if (!g_gxState.displayCopyTexture || g_gxState.displayCopyWidth != dstWidth ||
@@ -509,10 +515,12 @@ void GXCopyTex(void* dest, GXBool clear) {
   }
 
   const bool alphaUpdate = g_gxState.alphaUpdate && aurora::gx::render_target_has_alpha(g_gxState.pixelFmt);
-  if (alphaUpdate && g_gxState.dstAlpha != UINT32_MAX) {
-    if (!clear) {
-      // TODO: Confirm how this copy should handle alpha without changing the EFB.
-    }
+  // GXSetDstAlpha replaces the alpha each *draw* writes; the copy itself reads the EFB alpha as
+  // it is. Overwriting the whole EFB alpha with the constant here made every copy taken while
+  // dst alpha was on opaque (BW2's title and briefing planets are copied over a cleared,
+  // alpha-0 background and came out as white boxes). AURORA_COPYTEX_DSTALPHA=1 restores it.
+  static const bool clearAlphaToDstAlpha = std::getenv("AURORA_COPYTEX_DSTALPHA") != nullptr;
+  if (clearAlphaToDstAlpha && alphaUpdate && g_gxState.dstAlpha != UINT32_MAX) {
     // Clear alpha with a pipeline that matches the pass sample count.
     aurora::gfx::push_draw_command(aurora::gfx::clear::DrawData{
         .pipeline = aurora::gfx::pipeline_ref(aurora::gfx::clear::PipelineConfig{
@@ -549,10 +557,14 @@ void GXCopyTex(void* dest, GXBool clear) {
   aurora::gfx::efb_ram::schedule(dest, logicalDstWidth, logicalDstHeight, texCopyFmt, handle.handle);
   if (aurora::gx::fifo::draw_trace_active()) {
     char note[200];
-    std::snprintf(note, sizeof(note), "COPYTEX src=%d,%d,%dx%d -> %ux%u fmt=%u half=%d clear=%d dest=%p",
+    std::snprintf(note, sizeof(note),
+                  "COPYTEX src=%d,%d,%dx%d -> %ux%u fmt=%u half=%d clear=%d dest=%p au=%d dstA=%d clr=%.2f,%.2f,%.2f,%.2f",
                   g_gxState.texCopySrc.x, g_gxState.texCopySrc.y, g_gxState.texCopySrc.width,
                   g_gxState.texCopySrc.height, logicalDstWidth, logicalDstHeight, static_cast<unsigned>(texCopyFmt),
-                  g_gxState.texCopyHalfScale, clear, dest);
+                  g_gxState.texCopyHalfScale, clear, dest, alphaUpdate,
+                  g_gxState.dstAlpha == UINT32_MAX ? -1 : static_cast<int>(g_gxState.dstAlpha),
+                  clearState.clearColorValue.x(), clearState.clearColorValue.y(), clearState.clearColorValue.z(),
+                  clearState.clearColorValue.w());
     aurora::gx::fifo::draw_trace_note(note);
   }
 }
