@@ -510,6 +510,7 @@ public sealed partial class CxxLinearCodeGenerator
                 {
                     var indirectTarget = ToExpression(icall.Target, types);
                     AppendFlush(sb, pad);
+                    EmitNormalizeIndirectCallFloatArguments(icall.Arguments, sb, pad, localPaired);
                     sb.AppendLine($"{pad}InvokeIndirectCpu({indirectTarget}, ctx);");
                     AppendReload(sb, pad);
                     // f1 is the conventional scalar floating-point return.
@@ -760,6 +761,40 @@ public sealed partial class CxxLinearCodeGenerator
             }
 
             var regIndex = ParseFloatRegisterIndex(baseName);
+            sb.AppendLine($"{pad}ctx->fpr[{regIndex}].d = PPC_PsToScalarInline(ctx->fpr[{regIndex}].d);");
+            localPaired[baseName] = false;
+        }
+    }
+
+    // An indirect call has no inferred callee ABI, so nothing proves which argument
+    // registers the callee reads as scalars. On hardware the scalar view of a paired
+    // FPR is ps0, and compiled code never carries a paired payload in a volatile
+    // argument register across a call, so every paired ABI float argument (f1-f13,
+    // the registers the lifter lists for bctrl/blrl) is materialized as its scalar
+    // before the call. Without this, BW2's unit-vs-unit collision response
+    // (0x8011B5DC -> [vtable+172] -> 0x8011A980) passed a squared distance produced
+    // by ps_madds0 as a packed pair and the callee read 2.6e15 from f1.
+    private static void EmitNormalizeIndirectCallFloatArguments(
+        IReadOnlyList<IrValue> arguments,
+        StringBuilder sb,
+        string pad,
+        Dictionary<string, bool> localPaired)
+    {
+        foreach (var arg in arguments)
+        {
+            if (arg.Kind != "register" || arg.RegisterName == null)
+            {
+                continue;
+            }
+
+            var baseName = GetRegisterBaseName(arg.RegisterName);
+            if (!TryParseFloatRegisterIndex(baseName, out var regIndex) ||
+                !localPaired.TryGetValue(baseName, out var isPaired) ||
+                !isPaired)
+            {
+                continue;
+            }
+
             sb.AppendLine($"{pad}ctx->fpr[{regIndex}].d = PPC_PsToScalarInline(ctx->fpr[{regIndex}].d);");
             localPaired[baseName] = false;
         }

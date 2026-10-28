@@ -5,6 +5,39 @@ All notable changes to this port are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) with `0.y.z` while the port is
 pre-release (see "Versioning" at the end).
 
+## [0.1.1] — 2026-10-28
+
+Patch release: the commit that adds this entry; version string in the
+settings overlay (F10) bumped to 0.1.1.
+
+### Fixed
+
+- Invisible walls around the player near allied units (reported 2026-10-22,
+  task 09a). The ally-contact response read a garbage squared distance:
+  the caller computed it with paired-single arithmetic and passed it through
+  a `bctrl`, and the translator left the packed pair in `f1` at indirect
+  call boundaries. With `d >> R` the penetration push
+  `0.2 * (R - d) / d * delta` pointed towards the ally, cancelling any
+  motion away from it. The translator now materializes every paired
+  argument register (f1–f13) as its scalar view (ps0, the hardware
+  semantics) before an indirect call (D30, `EmitNormalizeIndirectCallFloatArguments`),
+  and the inter-block paired dataflow clears those bits. 222 translated
+  functions change; translator tests 646/646. Measured on the user's save
+  (`logs/11-corral-a1b.log` vs `11-corral-a1d.log`, `scripts/corral_frames.py`):
+  the radial velocity kept when walking away from an ally goes from a
+  median of 0.00 to 1.13 (never clipped), while approaching is still
+  slowed by the push.
+
+### Diagnostics
+
+- `BW2_WATCH_WRITER=NAME=ADDR[:OFF...][,...]`: reports which function wrote
+  a watched word at every call boundary (call, return, indirect return,
+  direct return), with the value before and after (patch 0031).
+- `BW2_TRACE_INDIRECT_LR=ADDR[,...]`: filters the indirect-call trace by
+  the caller's link register.
+- The F10 overlay version string lives in
+  `projects/bw2/remap/source_edits.csv`, so `iterate.sh` no longer drops it.
+
 ## [0.1.0] — 2026-10-19
 
 First named version. Build at commit `7b36e44` (2026-10-17); the milestone
@@ -126,6 +159,7 @@ it marks is mission 1 of the campaign played to victory on macOS on
 - `1.0.0`: the full campaign plays on at least one target.
 
 No public releases yet: `0.1.0` is the build at commit `7b36e44` plus this
-file and the version string in the settings overlay. There is deliberately no
+file and the version string in the settings overlay; `0.1.1` is the commit
+that adds its changelog entry (2026-10-28). There is deliberately no
 `VERSION` file at the repository root: on a case-insensitive filesystem it
 shadows libc++'s `<version>` header because `port/` is on the include path.

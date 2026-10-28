@@ -86,8 +86,10 @@ public class ScalarPairedBoundaryCodeGenTests
     }
 
     [Fact]
-    public void PreservesPairedArgumentsAtUnprovenIndirectCallBoundary()
+    public void NormalizesPairedArgumentsAtUnprovenIndirectCallBoundary()
     {
+        // The callee of a bctrl has no inferred ABI; a paired payload in an argument
+        // register would reach a callee that reads the scalar view (ps0) as garbage.
         var code = Emit(
             new IrCall("f1", "PPC_PsMul", new[]
             {
@@ -101,8 +103,8 @@ public class ScalarPairedBoundaryCodeGenTests
         var call = code.IndexOf("InvokeIndirectCpu(ctr, ctx);", StringComparison.Ordinal);
 
         Assert.True(call >= 0, code);
-        Assert.DoesNotContain(
-            "f1.d = PPC_PsToScalarInline(f1.d);",
+        Assert.Contains(
+            "ctx->fpr[1].d = PPC_PsToScalarInline(ctx->fpr[1].d);",
             code[..call],
             StringComparison.Ordinal);
         Assert.Contains(
@@ -112,27 +114,47 @@ public class ScalarPairedBoundaryCodeGenTests
     }
 
     [Fact]
-    public void PreservesUntouchedPairedPayloadAcrossIndirectCall()
+    public void NormalizesEveryPairedVolatileArgumentAtIndirectCallBoundary()
     {
+        // Compiled code never carries a paired payload in a volatile argument register
+        // across a call, so f2 is materialized as its scalar too; the nonvolatile f14,
+        // which the lifter never lists as an argument, keeps its packed payload.
         var code = Emit(
             new IrCall("f2", "PPC_PsMul", new[]
             {
                 IrValue.Register("f5"), IrValue.Register("f6")
             }),
+            new IrCall("f14", "PPC_PsMul", new[]
+            {
+                IrValue.Register("f5"), IrValue.Register("f6")
+            }),
             new IrIndirectCall(string.Empty, IrValue.Register("ctr"), new[]
             {
-                IrValue.Register("r3")
+                IrValue.Register("r3"), IrValue.Register("f1"), IrValue.Register("f2")
             }),
-            new IrCall("f3", "PPC_PsNeg", new[] { IrValue.Register("f2") }));
+            new IrCall("f3", "PPC_PsNeg", new[] { IrValue.Register("f2") }),
+            new IrCall("f4", "PPC_PsNeg", new[] { IrValue.Register("f14") }));
         var call = code.IndexOf("InvokeIndirectCpu(ctr, ctx);", StringComparison.Ordinal);
 
         Assert.True(call >= 0, code);
         Assert.Contains(
-            "PPC_PsNegInline(f2.d)",
-            code[call..],
+            "ctx->fpr[2].d = PPC_PsToScalarInline(ctx->fpr[2].d);",
+            code[..call],
             StringComparison.Ordinal);
         Assert.DoesNotContain(
-            "PPC_PsFromScalarInline(f2.d)",
+            "ctx->fpr[1].d = PPC_PsToScalarInline(ctx->fpr[1].d);",
+            code[..call],
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "ctx->fpr[14].d = PPC_PsToScalarInline(ctx->fpr[14].d);",
+            code[..call],
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PPC_PsNegInline(PPC_PsFromScalarInline(f2.d))",
+            code[call..],
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "PPC_PsNegInline(f14.d)",
             code[call..],
             StringComparison.Ordinal);
     }

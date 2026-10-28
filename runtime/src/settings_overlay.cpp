@@ -1312,7 +1312,7 @@ void DrawTopBar() {
     ImGui::End();
     if (!ImGui::BeginMainMenuBar()) return;
 
-    ImGui::TextUnformatted("FrontlineRecomp 0.1.0");
+    ImGui::TextUnformatted("FrontlineRecomp 0.1.1");
     ImGui::Separator();
     const auto resolutionIt = std::find_if(kResolutions.begin(), kResolutions.end(), [](const ResolutionItem& item) {
         return std::fabs(item.scale - g_resolutionScale) < 0.001f;

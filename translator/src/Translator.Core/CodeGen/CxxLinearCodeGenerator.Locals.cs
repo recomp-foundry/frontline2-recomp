@@ -407,6 +407,9 @@ public sealed partial class CxxLinearCodeGenerator
                             }
                         case IrIndirectCall icall when !string.IsNullOrWhiteSpace(icall.Destination):
                             {
+                                // Paired ABI float arguments are materialized as scalars
+                                // before an indirect call (EmitNormalizeIndirectCallFloatArguments).
+                                newOut = ClearPairedIndirectCallFloatArguments(icall.Arguments, newOut);
                                 newOut &= ~f1Bit;
                                 var destBit = PairedFloatRegisterBit(icall.Destination);
                                 if (destBit >= 0)
@@ -416,6 +419,7 @@ public sealed partial class CxxLinearCodeGenerator
                                 break;
                             }
                         case IrIndirectCall icall:
+                            newOut = ClearPairedIndirectCallFloatArguments(icall.Arguments, newOut);
                             newOut &= ~f1Bit;
                             break;
                         case IrAssign assign:
@@ -526,6 +530,25 @@ public sealed partial class CxxLinearCodeGenerator
         }
 
         return new PairedFlowStateMaps(inMap, outMap);
+    }
+
+    private static uint ClearPairedIndirectCallFloatArguments(IReadOnlyList<IrValue> arguments, uint pairedMask)
+    {
+        foreach (var arg in arguments)
+        {
+            if (arg.Kind != "register" || arg.RegisterName == null)
+            {
+                continue;
+            }
+
+            var bit = PairedFloatRegisterBit(arg.RegisterName);
+            if (bit >= 0)
+            {
+                pairedMask &= ~(1u << bit);
+            }
+        }
+
+        return pairedMask;
     }
 
     private static uint ClearPairedGuestScalarFloatArguments(

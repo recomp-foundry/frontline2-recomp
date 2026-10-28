@@ -6,6 +6,7 @@
 #include "runtime_log.h"
 
 #include <array>
+#include <chrono>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -32,13 +33,98 @@ inline bool Bw2IsTracedIndirectTarget(uint32_t target);
 inline void Bw2TraceStaticCall(uint32_t target, const CpuContext* ctx);
 inline void Bw2TraceStaticReturn(uint32_t target, const CpuContext* ctx);
 
+// BW2_WATCH_WRITER=NAME=ADDR[:OFF...][,NAME=ADDR[:OFF...]...] (hex address, decimal offsets):
+// watches the three 32-bit words (a vector x, y, z) at the address each chain resolves to
+// (each ':' reads the word at the current address and adds the offset), and at every call
+// boundary (entry of any call, return of static, direct and indirect calls) logs the call that
+// first sees them changed, so the code writing a guest field can be found without a hardware
+// watchpoint. A change seen on a return was made by that callee; one seen on an entry, by the
+// caller since its last call boundary. NAME (optional) tags the lines.
+struct Bw2WriterWatch {
+    std::string name;
+    uint32_t base = 0;
+    std::vector<uint32_t> offsets;
+    uint32_t addr = 0;
+    uint32_t last[3] = {};
+    bool seen = false;
+};
+
+inline std::vector<Bw2WriterWatch>& Bw2GetWriterWatches() {
+    static std::vector<Bw2WriterWatch> watches = [] {
+        std::vector<Bw2WriterWatch> out;
+        const char* v = std::getenv("BW2_WATCH_WRITER");
+        if (v == nullptr) return out;
+        for (const char* p = v; *p != 0;) {
+            Bw2WriterWatch w;
+            const char* eq = std::strchr(p, '=');
+            const char* comma = std::strchr(p, ',');
+            if (eq != nullptr && (comma == nullptr || eq < comma)) {
+                w.name.assign(p, static_cast<size_t>(eq - p));
+                p = eq + 1;
+            }
+            char* end = nullptr;
+            w.base = static_cast<uint32_t>(std::strtoul(p, &end, 16));
+            while (end != nullptr && *end == ':') {
+                const char* q = end + 1;
+                w.offsets.push_back(static_cast<uint32_t>(std::strtoul(q, &end, 10)));
+                if (end == q) break;
+            }
+            if (w.base != 0) out.push_back(w);
+            if (end == nullptr || *end != ',') break;
+            p = end + 1;
+        }
+        return out;
+    }();
+    return watches;
+}
+
+inline void Bw2CheckWriterWatch(const char* kind, uint32_t target, const CpuContext* cpu) {
+    std::vector<Bw2WriterWatch>& watches = Bw2GetWriterWatches();
+    if (watches.empty() || cpu == nullptr) return;
+    static const auto start = std::chrono::steady_clock::now();
+    for (Bw2WriterWatch& w : watches) {
+        uint32_t addr = w.base;
+        bool ok = true;
+        for (uint32_t off : w.offsets) {
+            if (!Memory::Contains(addr, 4)) { ok = false; break; }
+            addr = Memory::Read32(addr) + off;
+        }
+        if (!ok || !Memory::Contains(addr, 12)) continue;
+        const uint32_t now[3] = {Memory::Read32(addr), Memory::Read32(addr + 4), Memory::Read32(addr + 8)};
+        if (addr != w.addr) {
+            w.addr = addr;
+            w.seen = false;
+        }
+        if (w.seen && now[0] == w.last[0] && now[1] == w.last[1] && now[2] == w.last[2]) continue;
+        const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        float before[3];
+        float after[3];
+        std::memcpy(before, w.last, sizeof(before));
+        std::memcpy(after, now, sizeof(after));
+        if (w.seen) {
+            std::fprintf(stderr,
+                         "[poswrite] %s t=%.3f %s 0x%08X LR=0x%08X r3=0x%08X (%.3f, %.3f, %.3f) -> (%.3f, %.3f, %.3f) d=(%.4f, %.4f, %.4f)\n",
+                         w.name.c_str(), t, kind, target, cpu->lr, cpu->gpr[3], before[0], before[1], before[2],
+                         after[0], after[1], after[2], after[0] - before[0], after[1] - before[1],
+                         after[2] - before[2]);
+        } else {
+            std::fprintf(stderr, "[poswrite] %s t=%.3f watching 0x%08X (%.3f, %.3f, %.3f)\n", w.name.c_str(), t,
+                         addr, after[0], after[1], after[2]);
+        }
+        std::memcpy(w.last, now, sizeof(now));
+        w.seen = true;
+    }
+}
+
 // Emitted by the translator after every static translated call (MKW_STATIC_TRANSLATED_CALL):
 // the exit-side counterpart of ApplyRuntimeCallOptions, used only by the call trace.
 inline void AfterRuntimeStaticCall(uint32_t target, CpuContext* ctx) {
     if (ctx != nullptr && Bw2IsTracedIndirectTarget(target)) Bw2TraceStaticReturn(target, ctx);
+    Bw2CheckWriterWatch("ret", target, ctx);
 }
 
 inline void ApplyRuntimeCallOptions(uint32_t target, CpuContext* ctx) {
+    Bw2CheckWriterWatch("call", target, ctx);
     // BW2_TRACE_INDIRECT also covers the static calls the translated code makes through
     // this hook (entry only: arguments, no return value).
     if (ctx != nullptr && Bw2IsTracedIndirectTarget(target)) Bw2TraceStaticCall(target, ctx);
@@ -576,6 +662,15 @@ inline void InvokeDirectCpuImpl(CpuContext* ctx) {
     static_assert(Target != 0, "InvokeDirectCpu cannot target address 0");
     CpuContext* cpu = ctx ? ctx : &GetPersistentCpuContext();
     ApplyRuntimeCallOptions(Target, cpu);
+    // Return-side writer watch (BW2_WATCH_WRITER) and call trace (BW2_TRACE_INDIRECT) for
+    // direct calls, whichever path returns.
+    struct WriterWatchOnReturn {
+        CpuContext* cpu;
+        ~WriterWatchOnReturn() {
+            if (Bw2IsTracedIndirectTarget(Target)) Bw2TraceStaticReturn(Target, cpu);
+            Bw2CheckWriterWatch("dret", Target, cpu);
+        }
+    } writerWatchOnReturn{cpu};
     if constexpr (KnownNativeCpuCall<Target>::kAvailable) {
         const auto invokeKnownNative = [&]() {
             PpcNonvolatileGprGuard gprGuard(cpu);
@@ -768,7 +863,28 @@ inline std::string Bw2TracedIndirectDerefs(uint32_t r3, uint32_t r4, uint32_t r5
 // BW2_TRACE_INDIRECT_R3=<hex>: only calls whose r3 (this) equals that value are logged.
 inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cpu) {
     Bw2TraceCallState st;
-    if (target == 0 || !Bw2IsTracedIndirectTarget(target)) return st;
+    // BW2_TRACE_INDIRECT_LR=ADDR[,ADDR...]: also trace the indirect calls made from these
+    // return addresses, whatever their target (finds the target of a virtual call site).
+    static const std::vector<uint32_t> fromLr = [] {
+        std::vector<uint32_t> out;
+        if (const char* v = std::getenv("BW2_TRACE_INDIRECT_LR")) {
+            for (const char* p = v; *p != 0;) {
+                char* end = nullptr;
+                const unsigned long value = std::strtoul(p, &end, 16);
+                if (end == p) break;
+                out.push_back(static_cast<uint32_t>(value));
+                p = (*end == ',') ? end + 1 : end;
+            }
+        }
+        return out;
+    }();
+    bool traced = target != 0 && Bw2IsTracedIndirectTarget(target);
+    if (!traced && target != 0 && cpu != nullptr) {
+        for (uint32_t lr : fromLr) {
+            if (cpu->lr == lr) { traced = true; break; }
+        }
+    }
+    if (!traced) return st;
     static const uint32_t onlyR3 = [] {
         const char* v = std::getenv("BW2_TRACE_INDIRECT_R3");
         return v != nullptr ? static_cast<uint32_t>(std::strtoul(v, nullptr, 16)) : 0u;
@@ -867,6 +983,7 @@ inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx) {
         dispatched = TryDispatchResolvedCpuTarget(TranslatedFunctionRegistry::FindByAddressPtr(target), cpu);
     }
     if (dispatched) Bw2TraceCallEnd(trace, cpu);
+    if (dispatched) Bw2CheckWriterWatch("iret", target, cpu);
     if (dispatched) {
         return;
     }
