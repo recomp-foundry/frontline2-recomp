@@ -20,6 +20,25 @@ bool Bw2KeyboardRemoteSample(unsigned int chan, WiiRemoteInput::KpadSample& samp
 // mouse pointer; returns false (nothing written) for a real remote.
 bool Bw2WriteKeyboardRemotePointer(unsigned int chan, unsigned int statusAddr);
 
+// Keys of the emulated remote, one per button and stick direction, kept in the
+// [wii_remote] section of Config.toml and edited from the settings overlay
+// (hle/bw2/keyboard_remote.cpp). A binding is an SDL scancode, PAD_KEY_MOUSE_*
+// (negative, as the overlay's keyboard bindings) or PAD_KEY_INVALID for none.
+namespace Bw2RemoteBindings {
+enum Input : unsigned int {
+    A, B, One, Two, Plus, Minus, Home,
+    DpadUp, DpadDown, DpadLeft, DpadRight,
+    Z, C,
+    StickUp, StickDown, StickLeft, StickRight,
+    Count
+};
+const char* Label(unsigned int input);
+int Binding(unsigned int input);
+// Both persist to Config.toml.
+void SetBinding(unsigned int input, int key);
+void ResetBindings();
+} // namespace Bw2RemoteBindings
+
 // The GX copy setters are native (Aurora); the originals also keep their BP
 // words in __GXData, which BW2's translated GXSetDispCopyYScale reads back.
 // These write the same words (hle/bw2/gx_breakpoint.cpp).

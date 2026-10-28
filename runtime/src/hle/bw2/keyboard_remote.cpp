@@ -6,6 +6,9 @@
 //   left / right click -> A / B          W A S D -> Nunchuk stick
 //   Space / Left Shift -> Z / C          arrows -> D-pad
 //   Enter / Backspace -> + / -           1 / 2 -> 1 / 2        H -> HOME
+// Those are the defaults; the [wii_remote] section of Config.toml overrides any
+// of them (key names as SDL prints them, "mouse_left".."mouse_x2", "" = none)
+// and the settings overlay (F10 > Controller settings) edits that section.
 // BW2_AUTOPRESS=1 also holds A+B for 1.5 s every 5 s (unattended boot tests);
 // BW2_AUTOPRESS_B_SECONDS=N stops pressing B after N seconds; BW2_AUTOPOINT aims the pointer.
 #include "bw2_hle.h"
@@ -25,13 +28,137 @@
 #include <cstdlib>
 #include "input_bindings.h"
 #include "memory.h"
+#include "runtime_config.h"
 #include "wii_remote_input.h"
+
+#include <dolphin/pad.h>
+
+#include <array>
+#include <atomic>
+#include <fstream>
 
 namespace {
 
 constexpr uint32_t kWpadLeft = 0x0001, kWpadRight = 0x0002, kWpadDown = 0x0004, kWpadUp = 0x0008,
                    kWpadPlus = 0x0010, kWpadTwo = 0x0100, kWpadOne = 0x0200, kWpadB = 0x0400, kWpadA = 0x0800,
                    kWpadMinus = 0x1000, kWpadZ = 0x2000, kWpadC = 0x4000, kWpadHome = 0x8000;
+
+// One row per Bw2RemoteBindings::Input, in enum order. `hold` is the WPAD bit
+// the key sets; the stick directions have none and are read by index.
+struct RemoteBinding {
+    const char* label;
+    const char* configKey;
+    int defaultKey;
+    uint32_t hold;
+};
+constexpr std::array<RemoteBinding, Bw2RemoteBindings::Count> kRemoteBindings = {{
+    {"A", "a", PAD_KEY_MOUSE_LEFT, kWpadA},
+    {"B", "b", PAD_KEY_MOUSE_RIGHT, kWpadB},
+    {"1", "one", SDL_SCANCODE_1, kWpadOne},
+    {"2", "two", SDL_SCANCODE_2, kWpadTwo},
+    {"+", "plus", SDL_SCANCODE_RETURN, kWpadPlus},
+    {"-", "minus", SDL_SCANCODE_BACKSPACE, kWpadMinus},
+    {"HOME", "home", SDL_SCANCODE_H, kWpadHome},
+    {"D-pad up", "dpad_up", SDL_SCANCODE_UP, kWpadUp},
+    {"D-pad down", "dpad_down", SDL_SCANCODE_DOWN, kWpadDown},
+    {"D-pad left", "dpad_left", SDL_SCANCODE_LEFT, kWpadLeft},
+    {"D-pad right", "dpad_right", SDL_SCANCODE_RIGHT, kWpadRight},
+    {"Nunchuk Z", "z", SDL_SCANCODE_SPACE, kWpadZ},
+    {"Nunchuk C", "c", SDL_SCANCODE_LSHIFT, kWpadC},
+    {"Stick up", "stick_up", SDL_SCANCODE_W, 0},
+    {"Stick down", "stick_down", SDL_SCANCODE_S, 0},
+    {"Stick left", "stick_left", SDL_SCANCODE_A, 0},
+    {"Stick right", "stick_right", SDL_SCANCODE_D, 0},
+}};
+// Written by the overlay thread, read by the guest thread: atomics, no lock.
+std::array<std::atomic<int>, Bw2RemoteBindings::Count> g_remoteKeys;
+std::once_flag g_remoteKeysLoaded;
+
+constexpr std::array<const char*, 5> kMouseKeyNames = {"mouse_left", "mouse_middle", "mouse_right", "mouse_x1", "mouse_x2"};
+
+// Config.toml spelling of a binding: SDL's scancode name, a mouse token or "".
+std::string RemoteKeyName(int key) {
+    if (key == PAD_KEY_INVALID) {
+        return {};
+    }
+    if (key < PAD_KEY_INVALID) {
+        const int button = -key - 2;  // PAD_KEY_MOUSE_LEFT = -2 -> 0
+        return button >= 0 && button < static_cast<int>(kMouseKeyNames.size()) ? kMouseKeyNames[button] : std::string{};
+    }
+    return SDL_GetScancodeName(static_cast<SDL_Scancode>(key));
+}
+
+int RemoteKeyFromName(const std::string& name) {
+    if (name.empty()) {
+        return PAD_KEY_INVALID;
+    }
+    for (size_t i = 0; i < kMouseKeyNames.size(); ++i) {
+        if (name == kMouseKeyNames[i]) {
+            return -2 - static_cast<int>(i);
+        }
+    }
+    const SDL_Scancode code = SDL_GetScancodeFromName(name.c_str());
+    return code == SDL_SCANCODE_UNKNOWN ? PAD_KEY_INVALID : static_cast<int>(code);
+}
+
+// Defaults, then whatever [wii_remote] in Config.toml names (unknown names
+// unmap the input so a typo is visible in the overlay rather than silently
+// falling back).
+void LoadRemoteKeys() {
+    for (size_t i = 0; i < kRemoteBindings.size(); ++i) {
+        g_remoteKeys[i].store(kRemoteBindings[i].defaultKey, std::memory_order_relaxed);
+    }
+    const auto path = RuntimeConfigFile::ResolveConfigPath();
+    std::ifstream input(path);
+    if (!input) {
+        return;
+    }
+    try {
+        const toml::value document = toml::parse(input, RuntimeConfigFile::PathToUtf8(path));
+        if (!document.contains("wii_remote")) {
+            return;
+        }
+        const toml::value& section = toml::find(document, "wii_remote");
+        for (size_t i = 0; i < kRemoteBindings.size(); ++i) {
+            if (section.contains(kRemoteBindings[i].configKey)) {
+                const auto name = toml::find<std::string>(section, kRemoteBindings[i].configKey);
+                g_remoteKeys[i].store(RemoteKeyFromName(name), std::memory_order_relaxed);
+            }
+        }
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[bw2] [wii_remote] in Config.toml ignored: %s\n", e.what());
+    }
+}
+
+int RemoteKey(unsigned int input) {
+    std::call_once(g_remoteKeysLoaded, LoadRemoteKeys);
+    return input < Bw2RemoteBindings::Count ? g_remoteKeys[input].load(std::memory_order_relaxed) : PAD_KEY_INVALID;
+}
+
+void StoreRemoteKey(unsigned int input, int key) {
+    if (input >= Bw2RemoteBindings::Count) {
+        return;
+    }
+    std::call_once(g_remoteKeysLoaded, LoadRemoteKeys);
+    g_remoteKeys[input].store(key, std::memory_order_relaxed);
+    RuntimeConfigFile::WriteSetting("wii_remote", kRemoteBindings[input].configKey,
+                                    RuntimeConfigFile::FormatString(RemoteKeyName(key)));
+}
+
+} // namespace
+
+namespace Bw2RemoteBindings {
+const char* Label(unsigned int input) { return input < Count ? kRemoteBindings[input].label : ""; }
+int Binding(unsigned int input) { return RemoteKey(input); }
+void SetBinding(unsigned int input, int key) { StoreRemoteKey(input, key); }
+void ResetBindings() {
+    for (unsigned int i = 0; i < Count; ++i) {
+        StoreRemoteKey(i, kRemoteBindings[i].defaultKey);
+    }
+}
+} // namespace Bw2RemoteBindings
+
+namespace {
 
 // KPADStatus offsets (RVL SDK, 0x84 bytes; BW2's KPADRead uses the same stride).
 constexpr uint32_t kPos = 0x20, kVec = 0x28, kSpeed = 0x30, kHorizon = 0x34, kDist = 0x48, kDpdValidFg = 0x5E;
@@ -248,27 +375,27 @@ bool Bw2KeyboardRemoteSample(unsigned int chan, WiiRemoteInput::KpadSample& samp
 
     int keyCount = 0;
     const bool* keys = SDL_GetKeyboardState(&keyCount);
-    const auto down = [&](SDL_Scancode code) { return keys != nullptr && code < keyCount && keys[code]; };
-    const auto bit = [&](bool on, uint32_t value) { if (on) sample.hold |= value; };
-    bit(down(SDL_SCANCODE_LEFT), kWpadLeft);
-    bit(down(SDL_SCANCODE_RIGHT), kWpadRight);
-    bit(down(SDL_SCANCODE_UP), kWpadUp);
-    bit(down(SDL_SCANCODE_DOWN), kWpadDown);
-    bit(down(SDL_SCANCODE_RETURN), kWpadPlus);
-    bit(down(SDL_SCANCODE_BACKSPACE), kWpadMinus);
-    bit(down(SDL_SCANCODE_1), kWpadOne);
-    bit(down(SDL_SCANCODE_2), kWpadTwo);
-    bit(down(SDL_SCANCODE_H), kWpadHome);
-    bit(down(SDL_SCANCODE_SPACE), kWpadZ);
-    bit(down(SDL_SCANCODE_LSHIFT), kWpadC);
-    sample.stick[0] = (down(SDL_SCANCODE_D) ? 1.0f : 0.0f) - (down(SDL_SCANCODE_A) ? 1.0f : 0.0f);
-    sample.stick[1] = (down(SDL_SCANCODE_W) ? 1.0f : 0.0f) - (down(SDL_SCANCODE_S) ? 1.0f : 0.0f);
-
     float mx = 0.0f;
     float my = 0.0f;
     const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mx, &my);
-    bit((buttons & SDL_BUTTON_LMASK) != 0 || AutoPressA(), kWpadA);
-    bit((buttons & SDL_BUTTON_RMASK) != 0 || AutoPressB(), kWpadB);
+    // A binding is a scancode or, below PAD_KEY_INVALID, a mouse button (-2 = left).
+    const auto pressed = [&](unsigned int input) {
+        const int key = RemoteKey(input);
+        if (key == PAD_KEY_INVALID) return false;
+        if (key < PAD_KEY_INVALID) return (buttons & SDL_BUTTON_MASK(-key - 1)) != 0;
+        return keys != nullptr && key < keyCount && keys[key];
+    };
+    const auto bit = [&](bool on, uint32_t value) { if (on) sample.hold |= value; };
+    for (unsigned int i = 0; i < Bw2RemoteBindings::Count; ++i) {
+        bit(kRemoteBindings[i].hold != 0 && pressed(i), kRemoteBindings[i].hold);
+    }
+    const auto axis = [&](unsigned int plus, unsigned int minus) {
+        return (pressed(plus) ? 1.0f : 0.0f) - (pressed(minus) ? 1.0f : 0.0f);
+    };
+    sample.stick[0] = axis(Bw2RemoteBindings::StickRight, Bw2RemoteBindings::StickLeft);
+    sample.stick[1] = axis(Bw2RemoteBindings::StickUp, Bw2RemoteBindings::StickDown);
+    bit(AutoPressA(), kWpadA);
+    bit(AutoPressB(), kWpadB);
     if (SDL_Window* window = SDL_GetMouseFocus()) {
         int w = 0;
         int h = 0;

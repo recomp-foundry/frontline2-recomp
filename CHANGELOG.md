@@ -5,6 +5,21 @@ All notable changes to this port are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) with `0.y.z` while the port is
 pre-release (see "Versioning" at the end).
 
+## [Unreleased] — branch `controles-pc`
+
+### Added
+
+- The keyboard and mouse keys of the emulated Wii Remote + Nunchuk can be
+  changed (task 09). F10 → Controller settings → Port 1 now starts with a
+  "Wii Remote + Nunchuk (keyboard and mouse)" section: one rebindable entry per
+  button (A, B, 1, 2, +, −, HOME, D-pad, Nunchuk Z and C) and per stick
+  direction, with "Reset to defaults". Bindings persist in a `[wii_remote]`
+  section of `Config.toml` (SDL key names, `mouse_left`…`mouse_x2`, `""` for
+  none) and are read by `hle/bw2/keyboard_remote.cpp`, which previously had
+  them hard-coded. The GameCube sections below it are labelled as not read by
+  this game: BW2 only calls `KPADRead`, never `PADRead` (patch 0032 for the
+  overlay).
+
 ## [0.1.2] — 2026-10-28
 
 Patch release: the commit that adds this entry; version string in the

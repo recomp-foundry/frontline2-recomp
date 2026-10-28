@@ -1,0 +1,55 @@
+--- a/runtime/src/settings_overlay.cpp	2026-10-28 16:00:58
++++ b/runtime/src/settings_overlay.cpp	2026-10-28 16:00:58
+@@ -4,6 +4,7 @@
+ #include "controller_button_names.h"
+ #include "controller_mapping_wizard.h"
+ #include "input_bindings.h"
++#include "bw2_hle.h"
+ #include "game_graphics_options.h"
+ #include "music_attenuation.h"
+ #include "runtime_config.h"
+@@ -443,7 +444,7 @@
+     }
+ }
+ 
+-enum class RebindKind { KeyboardButton, KeyboardAxis, Controller, MuteHotkey };
++enum class RebindKind { KeyboardButton, KeyboardAxis, Controller, MuteHotkey, WiiRemote };
+ struct RebindState {
+     bool active = false;
+     bool openPopup = false;
+@@ -512,6 +513,11 @@
+     } else if (capture.kind == RebindKind::MuteHotkey) {
+         g_muteHotkey = static_cast<int32_t>(value);
+         RuntimeConfigFile::SetMuteHotkey(g_muteHotkey);
++        g_rebind.active = false;
++        return;
++    } else if (capture.kind == RebindKind::WiiRemote) {
++        // BW2: the emulated Wii Remote + Nunchuk keeps its own keys ([wii_remote] in Config.toml).
++        Bw2RemoteBindings::SetBinding(capture.target, static_cast<int>(value));
+         g_rebind.active = false;
+         return;
+     } else if (capture.kind == RebindKind::KeyboardButton) {
+@@ -757,6 +763,23 @@
+ 
+     ImGui::Separator();
+     const uint32_t selectedGamePort = static_cast<uint32_t>(g_controllerPort);
++    // BW2 reads channel 0 as a Wii Remote + Nunchuk (KPADRead) and never calls
++    // PADRead, so the GameCube bindings below do not reach it; the keyboard and
++    // mouse stand in for the remote while none is paired (hle/bw2/keyboard_remote.cpp).
++    if (selectedGamePort == 0) {
++        ImGui::SeparatorText("Wii Remote + Nunchuk (keyboard and mouse)");
++        ImGui::TextDisabled("Used while no Wii Remote is paired. The mouse is always the pointer.");
++        ImGui::PushID("wii_remote");
++        for (unsigned int i = 0; i < Bw2RemoteBindings::Count; ++i) {
++            ImGui::PushID(static_cast<int>(i));
++            DrawKeyBinding(Bw2RemoteBindings::Label(i), Bw2RemoteBindings::Binding(i), RebindKind::WiiRemote,
++                           static_cast<uint16_t>(i));
++            ImGui::PopID();
++        }
++        if (ImGui::Button("Reset to defaults")) Bw2RemoteBindings::ResetBindings();
++        ImGui::PopID();
++        ImGui::SeparatorText("GameCube controller (not read by this game)");
++    }
+     if (DrawKeyboardSettings(selectedGamePort)) {
+         return;
+     }
