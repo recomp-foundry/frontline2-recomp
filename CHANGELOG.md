@@ -5,7 +5,11 @@ All notable changes to this port are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) with `0.y.z` while the port is
 pre-release (see "Versioning" at the end).
 
-## [Unreleased] — branch `controles-pc`
+## [0.1.3] — 2026-10-28
+
+Patch release on the `controles-pc` branch: the commit that adds this entry;
+version string in the settings overlay (F10) bumped to 0.1.3. First step of
+the PC-controls work (task 09); 0.1.4 is planned for PC gamepads.
 
 ### Added
 
@@ -202,7 +206,7 @@ it marks is mission 1 of the campaign played to victory on macOS on
 - `1.0.0`: the full campaign plays on at least one target.
 
 No public releases yet: `0.1.0` is the build at commit `7b36e44` plus this
-file and the version string in the settings overlay; `0.1.1` and `0.1.2`
-are the commits that add their changelog entries (2026-10-28). There is deliberately no
+file and the version string in the settings overlay; `0.1.1`, `0.1.2` and
+`0.1.3` are the commits that add their changelog entries (2026-10-28). There is deliberately no
 `VERSION` file at the repository root: on a case-insensitive filesystem it
 shadows libc++'s `<version>` header because `port/` is on the include path.
