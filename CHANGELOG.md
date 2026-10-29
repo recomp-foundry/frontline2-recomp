@@ -5,6 +5,29 @@ All notable changes to this port are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) with `0.y.z` while the port is
 pre-release (see "Versioning" at the end).
 
+## [0.1.5] — 2026-10-29
+
+Patch release on the `rendimiento-cpu` branch: the commit that adds this entry;
+version string in the settings overlay (F10) bumped to 0.1.5. Found while
+sizing the New 3DS port (task 13).
+
+### Changed
+
+- About 17 % less CPU work for the game during mission 1 on macOS (Apple M4,
+  measured with `sample`; two runs before, one after). The frame rate does not
+  change, since the game was already paced at 30 fps, but each frame finishes
+  earlier and leaves more headroom in heavy scenes.
+  - The diagnostic call hooks (`BW2_WATCH_WRITER`, `BW2_TRACE_INDIRECT`,
+    `BW2_TRACE_INDIRECT_LR`) ran on every translated call even with none of
+    those variables set. They now test a flag read once at startup and keep
+    their bodies out of line; they still work without rebuilding when a
+    variable is set. Builds can drop them with `MKW_BW2_CALL_HOOKS=0`
+    (patch 0033).
+  - Every guest cache flush or invalidate walked the whole palette (TLUT)
+    table to mark changed palettes, and the AX voice sync does one for each
+    voice on every audio frame. Palettes are now kept in an index sorted by
+    address, as texture objects already were (patch 0034).
+
 ## [0.1.4] — 2026-10-28
 
 Patch release on the `controles-pc` branch: the commit that adds this entry;
