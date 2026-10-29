@@ -1,8 +1,10 @@
 #include "gx_internal.h"
 #include "runtime_log.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <limits>
+#include <vector>
 
 // --- Texture and TLUT Objects ---
 
@@ -105,6 +107,19 @@ uint32_t g_texObjIntervalMaxSize = 0;
 uint64_t g_tlutObjBoundsStart = 0;
 uint64_t g_tlutObjBoundsEnd = 0;
 bool g_tlutObjBoundsDirty = true;
+
+// Valid TLUT payloads sorted by start, rebuilt together with the bounds. BW2's AX voice sync
+// flushes and invalidates every voice's parameter block each audio frame; those ranges fall
+// inside the bounds, so walking the whole map per call took ~14 % of the game thread (task 13).
+// With the index a call costs a binary search plus the payloads that can still reach it.
+// TlutObjMeta pointers stay valid: g_TlutObjMeta is node-based and never erased from.
+struct TlutObjIntervalEntry {
+    uint64_t start = 0;
+    uint64_t end = 0;
+    TlutObjMeta* meta = nullptr;
+};
+std::vector<TlutObjIntervalEntry> g_tlutObjIntervals;
+uint64_t g_tlutObjIntervalMaxSize = 0;
 
 // Guest GXTexObj is 32 bytes: word0 wrap/filter bits, word1 LOD bits, word2 width/height/format,
 // word3 data address (<<5), word4 user data, word5 texFmt, word6 tlut, byte 0x1F flags. Exact
@@ -387,7 +402,9 @@ void EnsureTlutObjBoundsLocked() {
 
     uint64_t boundsStart = std::numeric_limits<uint64_t>::max();
     uint64_t boundsEnd = 0;
-    for (const auto& [objAddr, meta] : g_TlutObjMeta) {
+    g_tlutObjIntervals.clear();
+    g_tlutObjIntervalMaxSize = 0;
+    for (auto& [objAddr, meta] : g_TlutObjMeta) {
         (void)objAddr;
         if (meta.dataAddr == 0 || meta.entries == 0 || !IsKnownTlutFormat(meta.format)) {
             continue;
@@ -396,7 +413,11 @@ void EnsureTlutObjBoundsLocked() {
         const uint64_t tlutEnd = tlutStart + static_cast<uint64_t>(meta.entries) * 2u;
         boundsStart = std::min(boundsStart, tlutStart);
         boundsEnd = std::max(boundsEnd, tlutEnd);
+        g_tlutObjIntervals.push_back(TlutObjIntervalEntry{tlutStart, tlutEnd, &meta});
+        g_tlutObjIntervalMaxSize = std::max(g_tlutObjIntervalMaxSize, tlutEnd - tlutStart);
     }
+    std::sort(g_tlutObjIntervals.begin(), g_tlutObjIntervals.end(),
+              [](const TlutObjIntervalEntry& a, const TlutObjIntervalEntry& b) { return a.start < b.start; });
     if (boundsStart >= boundsEnd) {
         boundsStart = 0;
         boundsEnd = 0;
@@ -696,17 +717,18 @@ void MarkTlutObjsDirtyForRange(uint32_t addr, uint32_t size) {
         dirtyStart >= g_tlutObjBoundsEnd) {
         return;
     }
-    for (auto& [objAddr, meta] : g_TlutObjMeta) {
-        if (meta.dataAddr == 0 || meta.entries == 0 || !IsKnownTlutFormat(meta.format)) {
-            continue;
+    // Every entry left of the first start >= dirtyEnd begins before the range ends; walk left
+    // until no earlier start can reach dirtyStart (entries are sorted by start only).
+    auto it = std::lower_bound(
+        g_tlutObjIntervals.begin(), g_tlutObjIntervals.end(), dirtyEnd,
+        [](const TlutObjIntervalEntry& entry, uint64_t key) { return entry.start < key; });
+    while (it != g_tlutObjIntervals.begin()) {
+        --it;
+        if (it->start + g_tlutObjIntervalMaxSize <= dirtyStart) {
+            break;
         }
-
-        const uint64_t tlutStart = CanonicalizeGxMainRamAddress(meta.dataAddr);
-        const uint64_t tlutEnd = tlutStart + static_cast<uint64_t>(meta.entries) * 2u;
-        if (dirtyEnd <= tlutStart || dirtyStart >= tlutEnd) {
-            continue;
+        if (it->end > dirtyStart) {
+            it->meta->dirty = true;
         }
-
-        meta.dirty = true;
     }
 }

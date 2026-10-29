@@ -24,6 +24,21 @@
 
 inline void InvokeIndirectCpu(uint32_t target, CpuContext* ctx);
 
+// BW2 diagnostic call hooks (BW2_WATCH_WRITER, BW2_TRACE_INDIRECT, BW2_TRACE_INDIRECT_LR) sit on
+// every translated call. Their bodies stay out of line behind this flag, read once at startup, so
+// with none of the variables set a call pays a load and a not-taken branch (the hooks took ~11 %
+// of the game thread before, task 13). MKW_BW2_CALL_HOOKS=0 compiles them out (3DS builds).
+#ifndef MKW_BW2_CALL_HOOKS
+#define MKW_BW2_CALL_HOOKS 1
+#endif
+#if MKW_BW2_CALL_HOOKS
+inline const bool g_bw2CallHooksActive = std::getenv("BW2_WATCH_WRITER") != nullptr ||
+                                         std::getenv("BW2_TRACE_INDIRECT") != nullptr ||
+                                         std::getenv("BW2_TRACE_INDIRECT_LR") != nullptr;
+#else
+inline constexpr bool g_bw2CallHooksActive = false;
+#endif
+
 // Some game-facing runtime options alter arguments at well-defined ABI
 // boundaries. Keep this independent of the dispatch mechanism: generated
 // static calls deliberately bypass InvokeDirectCpu for performance.
@@ -78,7 +93,7 @@ inline std::vector<Bw2WriterWatch>& Bw2GetWriterWatches() {
     return watches;
 }
 
-inline void Bw2CheckWriterWatch(const char* kind, uint32_t target, const CpuContext* cpu) {
+__attribute__((noinline)) inline void Bw2CheckWriterWatchSlow(const char* kind, uint32_t target, const CpuContext* cpu) {
     std::vector<Bw2WriterWatch>& watches = Bw2GetWriterWatches();
     if (watches.empty() || cpu == nullptr) return;
     static const auto start = std::chrono::steady_clock::now();
@@ -114,6 +129,10 @@ inline void Bw2CheckWriterWatch(const char* kind, uint32_t target, const CpuCont
         std::memcpy(w.last, now, sizeof(now));
         w.seen = true;
     }
+}
+
+inline void Bw2CheckWriterWatch(const char* kind, uint32_t target, const CpuContext* cpu) {
+    if (g_bw2CallHooksActive) [[unlikely]] Bw2CheckWriterWatchSlow(kind, target, cpu);
 }
 
 // Emitted by the translator after every static translated call (MKW_STATIC_TRANSLATED_CALL):
@@ -791,7 +810,7 @@ inline bool Bw2TraceFrameWindowOpen() {
     return fromFrame <= 0 || g_gxFrameCount >= fromFrame;
 }
 
-inline bool Bw2IsTracedIndirectTarget(uint32_t target) {
+__attribute__((noinline)) inline bool Bw2IsTracedIndirectTargetSlow(uint32_t target) {
     if (!Bw2TraceFrameWindowOpen()) return false;
     static const std::vector<uint32_t> targets = [] {
         std::vector<uint32_t> out;
@@ -810,6 +829,9 @@ inline bool Bw2IsTracedIndirectTarget(uint32_t target) {
         if (t == target) return true;
     }
     return false;
+}
+inline bool Bw2IsTracedIndirectTarget(uint32_t target) {
+    return g_bw2CallHooksActive && Bw2IsTracedIndirectTargetSlow(target);
 }
 
 // A chain starting with "r3" follows the offsets from r3 instead of r4; "ret" from the r3
@@ -861,7 +883,7 @@ inline std::string Bw2TracedIndirectDerefs(uint32_t r3, uint32_t r4, uint32_t r5
 
 // Call trace shared by InvokeIndirectCpu and InvokeDirectCpu (see BW2_TRACE_INDIRECT).
 // BW2_TRACE_INDIRECT_R3=<hex>: only calls whose r3 (this) equals that value are logged.
-inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cpu) {
+__attribute__((noinline)) inline Bw2TraceCallState Bw2TraceCallBeginSlow(uint32_t target, const CpuContext* cpu) {
     Bw2TraceCallState st;
     // BW2_TRACE_INDIRECT_LR=ADDR[,ADDR...]: also trace the indirect calls made from these
     // return addresses, whatever their target (finds the target of a virtual call site).
@@ -901,8 +923,12 @@ inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cp
     st.f1 = cpu->fpr[1].d;
     return st;
 }
+inline Bw2TraceCallState Bw2TraceCallBegin(uint32_t target, const CpuContext* cpu) {
+    if (!g_bw2CallHooksActive) [[likely]] return Bw2TraceCallState{};
+    return Bw2TraceCallBeginSlow(target, cpu);
+}
 
-inline void Bw2TraceCallEnd(const Bw2TraceCallState& st, const CpuContext* cpu) {
+__attribute__((noinline)) inline void Bw2TraceCallEndSlow(const Bw2TraceCallState& st, const CpuContext* cpu) {
     if (!st.traced) return;
     static const uint64_t traceFirst = [] {
         const char* v = std::getenv("BW2_TRACE_INDIRECT_FIRST");
@@ -924,6 +950,9 @@ inline void Bw2TraceCallEnd(const Bw2TraceCallState& st, const CpuContext* cpu) 
                  st.target, static_cast<unsigned long long>(st.call), st.lr, st.r3, st.r4, st.r5, st.f1, cpu->gpr[3],
                  cpu->fpr[1].d, ctxWords[0], ctxWords[1], ctxWords[2], ctxWords[3], ctxWords[4], ctxWords[5],
                  ctxWords[6], ctxWords[7], Bw2TracedIndirectDerefs(st.r3, st.r4, st.r5, cpu->gpr[3]).c_str());
+}
+inline void Bw2TraceCallEnd(const Bw2TraceCallState& st, const CpuContext* cpu) {
+    if (st.traced) [[unlikely]] Bw2TraceCallEndSlow(st, cpu);
 }
 
 inline void Bw2TraceStaticCall(uint32_t target, const CpuContext* cpu) {
